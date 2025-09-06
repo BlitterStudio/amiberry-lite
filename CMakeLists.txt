@@ -27,7 +27,7 @@ option(USE_ZSTD 	     "Use Zstandard for CHD compressed disk images" ON)
 ## Determine proper semantic version
 set(VERSION_MAJOR "5")
 set(VERSION_MINOR "8")
-set(VERSION_PATCH "10")
+set(VERSION_PATCH "11")
 set(VERSION_PRE_RELEASE "")
 
 set(VERSION "${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_PATCH}")

@@ -15,11 +15,8 @@
 #include "rommgr.h"
 #include "custom.h"
 #include "newcpu.h"
-#include "zfile.h"
 #include "cd32_fmv.h"
-#include "uae.h"
 #include "debug.h"
-#include "custom.h"
 #include "audio.h"
 #include "devices.h"
 #include "threaddep/thread.h"
@@ -1393,7 +1390,7 @@ static void fmv_next_cd_audio_buffer_callback(int bufnum, void *param)
 	uae_sem_post(&play_sem);
 }
 
-void cd32_fmv_vsync_handler(void)
+static void cd32_fmv_vsync_handler(void)
 {
 }
 
@@ -1410,7 +1407,8 @@ static void cd32_fmv_audio_handler(void)
 		cd_audio_mode_changed = false;
 		if (cl450_play) {
 			audio_cda_new_buffer(&cas, NULL, -1, -1, NULL, NULL);
-			fmv_bufon[0] = fmv_bufon[1] = 0;
+			fmv_bufon[0] = 0;
+			fmv_bufon[1] = 0;
 			delete cda;
 			cda = new cda_audio(PCM_SECTORS, KJMP2_SAMPLES_PER_FRAME * 4, 44100);
 			l64111_setvolume();

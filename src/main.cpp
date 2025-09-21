@@ -41,18 +41,14 @@
 #include "gui.h"
 #include "zfile.h"
 #include "autoconf.h"
-#include "picasso96.h"
 #include "native2amiga.h"
 #include "savestate.h"
-#include "filesys.h"
 #include "blkdev.h"
 #include "consolehook.h"
 #include "gfxboard.h"
 #ifdef WITH_LUA
 #include "luascript.h"
 #endif
-#include "uaenative.h"
-#include "tabletlibrary.h"
 #include "cpuboard.h"
 #ifdef WITH_PPC
 #include "uae/ppc.h"
@@ -67,7 +63,7 @@
 #endif
 
 #include <iostream>
-#ifndef __MACH__
+#if defined(__linux__)
 #include <linux/kd.h>
 #endif
 #include <sys/ioctl.h>
@@ -324,7 +320,7 @@ void fixup_cpu (struct uae_prefs *p)
 		p->cachesize = 0;
 		error_log (_T("JIT requires 68020 or better CPU."));
 	}
-	if (p->fpu_model == 0 && p->compfpu) {
+	if ((p->fpu_model == 0 || !p->cachesize) && p->compfpu) {
 		p->compfpu = false;
 	}
 
@@ -816,6 +812,7 @@ void usage()
 	std::cout << "Usage:" << '\n';
 	std::cout << " -h                         Show this help." << '\n';
 	std::cout << " --help                     \n" << '\n';
+	std::cout << " --log                      Show log output to console." << '\n';
 	std::cout << " -f <file>                  Load a configuration file." << '\n';
 	std::cout << " --config <file>            " << '\n';
 	std::cout << " --model <Amiga Model>      Amiga model to emulate, from the QuickStart options." << '\n';

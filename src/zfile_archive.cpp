@@ -24,8 +24,10 @@
 
 #include <zlib.h>
 
+#ifdef AMIBERRY
 #include "fsdb_host.h"
 #include "7z/7zBuf.h"
+#endif
 
 #define unpack_log write_log
 #undef unpack_log
@@ -774,7 +776,6 @@ struct zvolume *archive_directory_7z (struct zfile *z)
 	zv->method = ArchiveFormat7Zip;
 	return zv;
 }
-
 static struct zfile *archive_access_7z (struct znode *zn)
 {
 	SRes res;

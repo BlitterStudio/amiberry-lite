@@ -16,7 +16,6 @@
 #include "options.h"
 #include "zfile.h"
 #include "disk.h"
-#include "gui.h"
 #include "crc32.h"
 #include "fsdb.h"
 #include "fsusage.h"
@@ -138,7 +137,7 @@ static void zcache_close (void)
 	while (zc) {
 		struct zcache *n = zc->next;
 		zcache_free_data (zc);
-		xfree (n);
+		xfree(zc);
 		zc = n;
 	}
 }
@@ -1162,7 +1161,9 @@ static struct zfile *wrp (struct zfile *z, int *retcode)
 #include "7z/Xz.h"
 #include "7z/LzmaDec.h"
 #include "7z/7zCrc.h"
+#ifdef AMIBERRY
 #include "7z/XzCrc64.h"
+#endif
 
 static void *SzAlloc (void *p, size_t size)
 {
@@ -1191,7 +1192,9 @@ static struct zfile *xz (struct zfile *z, int *retcode)
 	if (!iscrc)
 	{
 		CrcGenerateTable ();
+#ifdef AMIBERRY
 		Crc64GenerateTable();
+#endif
 	}
 	iscrc = true;
 //	if (XzUnpacker_Create (&cx, &allocImp) != SZ_OK)

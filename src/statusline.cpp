@@ -162,7 +162,7 @@ void draw_status_line_single(int monid, uae_u8 *buf, int bpp, int y, int totalwi
 	int mult = td_custom ? 1 : statusline_mult[ad->picasso_on ? 1 : 0] / 100;
 
 	if (!mult)
-		return;
+		mult = 1;
 
 	y /= mult;
 

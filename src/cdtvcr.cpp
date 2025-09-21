@@ -27,7 +27,6 @@
 #include "threaddep/thread.h"
 #include "uae.h"
 #include "custom.h"
-#include "rommgr.h"
 #include "devices.h"
 
 #if CDTVCR_4510_EMULATION
@@ -243,7 +242,8 @@ static void cdtvcr_4510_reset(uae_u8 v)
 	cdtvcr_4510_ram[CDTVCR_PLAYLIST_TIME_MODE] = 2;
 	uae_sem_wait (&sub_sem);
 	memset (subcodebufferinuse, 0, sizeof subcodebufferinuse);
-	subcodebufferoffsetw = subcodebufferoffset = 0;
+	subcodebufferoffsetw = 0;
+	subcodebufferoffset = 0;
 	uae_sem_post (&sub_sem);
 
 	if (ismedia())
@@ -403,7 +403,8 @@ static void subfunc(uae_u8 *data, int cnt)
 	uae_sem_wait(&sub_sem);
 	if (subcodebufferinuse[subcodebufferoffsetw]) {
 		memset (subcodebufferinuse, 0,sizeof (subcodebufferinuse));
-		subcodebufferoffsetw = subcodebufferoffset = 0;
+		subcodebufferoffsetw = 0;
+		subcodebufferoffset = 0;
 	} else {
 		int offset = subcodebufferoffsetw;
 		while (cnt > 0) {

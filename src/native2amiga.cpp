@@ -15,8 +15,6 @@
 #include "threaddep/thread.h"
 #include "options.h"
 #include "memory.h"
-#include "custom.h"
-#include "newcpu.h"
 #include "autoconf.h"
 #include "traps.h"
 #include "native2amiga.h"
@@ -37,7 +35,8 @@ void native2amiga_install (void)
 void native2amiga_reset (void)
 {
 	smp_comm_pipe *p = &native2amiga_pending;
-	p->rdp = p->wrp = 0;
+	p->rdp = 0;
+	p->wrp = 0;
 	p->reader_waiting = 0;
 	p->writer_waiting = 0;
 }

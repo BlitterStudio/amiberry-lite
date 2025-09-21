@@ -16,8 +16,9 @@
 #include "videograb.h"
 #endif
 #include "arcadia.h"
+#include "uae/attributes.h"
 
-// We have this in sysconfig.h in Amiberry
+// We have this in sysconfig.h
 //#define VIDEOGRAB 1
 
 const TCHAR *specialmonitorfriendlynames[] =
@@ -550,7 +551,7 @@ static bool dctv(struct vidbuffer *src, struct vidbuffer *dst, bool doublelines,
 	int signature_cnt = 0;
 	bool dctv_enabled = false;
 	int ycnt = 0;
-	memset(dctv_luma, 64, sizeof DCTV_BUFFER_SIZE);
+	memset(dctv_luma, 64, sizeof(dctv_luma));
 
 	for (y = ystart; y < yend; y++) {
 		int yoff = (((y * 2 + oddlines) - src->yoffset) / vdbl);

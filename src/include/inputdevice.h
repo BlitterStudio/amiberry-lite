@@ -296,6 +296,7 @@ extern uae_u16 JOY0DAT (void);
 extern uae_u16 JOY1DAT (void);
 extern void JOYSET (int num, uae_u16 v);
 extern uae_u16 JOYGET (int num);
+extern void pulse_joydat(int joy, int xy, int dir);
 
 extern void inputdevice_vsync (void);
 extern void inputdevice_hsync (bool);
@@ -381,10 +382,10 @@ extern int handle_custom_event (const TCHAR *custom, int append);
 extern int inputdevice_geteventid(const TCHAR *s);
 extern void inputdevice_playevents(void);
 
-extern int inputdevice_testread (int*, int*, int*, bool);
-extern int inputdevice_istest (void);
-extern void inputdevice_settest (int);
-extern int inputdevice_testread_count (void);
+extern int inputdevice_testread(int*, int*, int*, bool);
+extern int inputdevice_istest(void);
+extern void inputdevice_settest(int);
+extern int inputdevice_testread_count(void);
 
 bool target_can_autoswitchdevice(void);
 void target_inputdevice_acquire(void);

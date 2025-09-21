@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 
@@ -55,7 +56,7 @@ static gcn::CheckBox* chkScsiRom24bitDma;
 static gcn::DropDown* cboExpansionBoardItemSelector;
 static gcn::DropDown* cboExpansionBoardSelector;
 static gcn::CheckBox* chkExpansionBoardCheckbox;
-static gcn::TextBox* txtExpansionBoardStringBox;
+static gcn::TextField* txtExpansionBoardStringBox;
 
 static gcn::DropDown* cboCpuBoardType;
 static gcn::DropDown* cboCpuBoardSubType;
@@ -140,8 +141,8 @@ static void enable_for_expansion2dlg()
 
 static void setcpuboardmemsize()
 {
-	if (changed_prefs.cpuboardmem1.size > cpuboard_maxmemory(&changed_prefs))
-		changed_prefs.cpuboardmem1.size = cpuboard_maxmemory(&changed_prefs);
+	changed_prefs.cpuboardmem1.size = std::min<uae_u32>(changed_prefs.cpuboardmem1.size,
+	                                                    cpuboard_maxmemory(&changed_prefs));
 
 	if (cpuboard_memorytype(&changed_prefs) == BOARD_MEMORY_Z2) {
 		changed_prefs.fastmem[0].size = changed_prefs.cpuboardmem1.size;
@@ -216,7 +217,7 @@ struct expansionrom_gui
 	gcn::DropDown* expansionrom_gui_itemselector;
 	gcn::DropDown* expansionrom_gui_selector;
 	gcn::CheckBox* expansionrom_gui_checkbox;
-	gcn::TextBox* expansionrom_gui_stringbox;
+	gcn::TextField* expansionrom_gui_stringbox;
 	int expansionrom_gui_settingsbits;
 	int expansionrom_gui_settingsshift;
 	int expansionrom_gui_settings;
@@ -225,7 +226,7 @@ struct expansionrom_gui
 static expansionrom_gui expansion_gui_item;
 static expansionrom_gui accelerator_gui_item;
 
-static void reset_expansionrom_gui(expansionrom_gui* eg, gcn::DropDown* itemselector, gcn::DropDown* selector, gcn::CheckBox* checkbox, gcn::TextBox* stringbox)
+static void reset_expansionrom_gui(expansionrom_gui* eg, gcn::DropDown* itemselector, gcn::DropDown* selector, gcn::CheckBox* checkbox, gcn::TextField* stringbox)
 {
 	eg->expansionrom_gui_settings = 0;
 	eg->expansionrom_gui_ebs = nullptr;
@@ -238,7 +239,7 @@ static void reset_expansionrom_gui(expansionrom_gui* eg, gcn::DropDown* itemsele
 
 static void create_expansionrom_gui(expansionrom_gui* eg, const expansionboardsettings* ebs,
 	int settings, const TCHAR* settingsstring,
-	gcn::DropDown* itemselector, gcn::DropDown* selector, gcn::CheckBox* checkbox, gcn::TextBox* stringbox)
+	gcn::DropDown* itemselector, gcn::DropDown* selector, gcn::CheckBox* checkbox, gcn::TextField* stringbox)
 {
 	bool reset = false;
 	static int recursive;
@@ -418,6 +419,33 @@ static const int scsiromselectedmask[] = {
 	EXPANSIONTYPE_SOUND, EXPANSIONTYPE_NET, EXPANSIONTYPE_FLOPPY, EXPANSIONTYPE_X86_EXPANSION
 };
 
+static void init_expansion_scsi_id()
+{
+	int index;
+	boardromconfig* brc = get_device_rom(&changed_prefs, static_cast<int>(expansionroms[scsiromselected].romtype), scsiromselectednum, &index);
+	const expansionromtype* ert = &expansionroms[scsiromselected];
+	if (brc && ert && ert->id_jumper) {
+		if (scsi_romid_list.getNumberOfElements() < 8) {
+			scsi_romid_list.clear();
+			for (int i = 0; i < 8; i++) {
+				TCHAR tmp[10];
+				_sntprintf(tmp, sizeof tmp, _T("%d"), i);
+				scsi_romid_list.add(tmp);
+			}
+		}
+		cboScsiRomId->setSelected(brc->roms[index].device_id);
+		cboScsiRomId->setEnabled(true);
+	}
+	else {
+		if (scsi_romid_list.getNumberOfElements() != 1) {
+			scsi_romid_list.clear();
+			scsi_romid_list.add(_T("-"));
+		}
+		cboScsiRomId->setSelected(0);
+		cboScsiRomId->setEnabled(false);
+	}
+}
+
 static void init_expansion2(bool init)
 {
 	static int first = -1;
@@ -534,23 +562,7 @@ static void init_expansion2(bool init)
 	if (scsiromselected > 0)
 		gui_set_string_cursor(scsiromselect_table, cboScsiRomSelect, scsiromselected);
 	cboScsiRomSelectCat->setSelected(scsiromselectedcatnum);
-
-	scsi_romid_list.clear();
-	int index;
-	boardromconfig* brc = get_device_rom(&changed_prefs, static_cast<int>(expansionroms[scsiromselected].romtype), scsiromselectednum, &index);
-	const expansionromtype* ert = &expansionroms[scsiromselected];
-	if (brc && ert && ert->id_jumper) {
-		for (int i = 0; i < 8; i++) {
-			TCHAR tmp[10];
-			_sntprintf(tmp, sizeof tmp, _T("%d"), i);
-			scsi_romid_list.add(tmp);
-		}
-	}
-	else {
-		scsi_romid_list.add(_T("-"));
-		cboScsiRomId->setSelected(0);
-		cboScsiRomId->setEnabled(false);
-	}
+	init_expansion_scsi_id();
 }
 
 static void values_to_expansion2dlg_sub()
@@ -569,15 +581,21 @@ static void values_to_expansion2dlg_sub()
 	}
 	int index;
 	boardromconfig* brc = get_device_rom(&changed_prefs, static_cast<int>(expansionroms[scsiromselected].romtype), scsiromselectednum, &index);
-	if (brc && er->subtypes) {
-		cboScsiRomSubSelect->setSelected(brc->roms[index].subtype);
-		cboScsiRomId->setSelected(brc->roms[index].device_id);
-		deviceflags |= er->subtypes[brc->roms[index].subtype].deviceflags;
+	if (brc) {
+		if (er->subtypes) {
+			cboScsiRomSubSelect->setSelected(brc->roms[index].subtype);
+			deviceflags |= er->subtypes[brc->roms[index].subtype].deviceflags;
+		}
 	}
 	else if (srt) {
 		cboScsiRomSubSelect->setSelected(0);
-		cboScsiRomId->setSelected(0);
 	}
+	else
+	{
+		cboScsiRomId->setEnabled(false);
+	}
+	init_expansion_scsi_id();
+
 	scsirom_selectnum_list.clear();
 	if (deviceflags & EXPANSIONTYPE_CLOCKPORT) {
 		scsirom_selectnum_list.add(_T("-"));
@@ -696,7 +714,7 @@ static void values_to_expansion2_expansion_roms(UAEREG* fkey)
 		}
 		cboScsiRomFile->setEnabled(true);
 		btnScsiRomChooser->setEnabled(true);
-		chkScsiRomFileAutoboot->setVisible(true);
+		chkScsiRomFileAutoboot->setVisible(!ert->autoboot_jumper);
 		if (romtype & ROMTYPE_NOT) {
 			btnScsiRomChooser->setVisible(false);
 			cboScsiRomFile->setVisible(false);
@@ -883,15 +901,12 @@ public:
 			std::string full_path = SelectFile("Select ROM", get_rom_path(), filter);
 			if (!full_path.empty())
 			{
-				int val = gui_get_string_cursor(scsiromselect_table, cboScsiRomFile);
-				if (val != -1) {
-					int index;
-					struct boardromconfig* brc = get_device_rom_new(&changed_prefs,
-					                                                static_cast<int>(expansionroms[scsiromselected].romtype),
-					                                                scsiromselectednum, &index);
-					_tcscpy(brc->roms[index].romfile, full_path.c_str());
-					fullpath(brc->roms[index].romfile, MAX_DPATH);
-				}
+				int index;
+				struct boardromconfig* brc = get_device_rom_new(&changed_prefs,
+				                                                static_cast<int>(expansionroms[scsiromselected].romtype),
+				                                                scsiromselectednum, &index);
+				_tcscpy(brc->roms[index].romfile, full_path.c_str());
+				fullpath(brc->roms[index].romfile, MAX_DPATH);
 			}
 			values_to_expansion2dlg();
 		}
@@ -1164,7 +1179,7 @@ void InitPanelExpansions(const config_category& category)
 	chkExpansionBoardCheckbox->setForegroundColor(gui_foreground_color);
 	chkExpansionBoardCheckbox->addActionListener(expansions_action_listener);
 
-	txtExpansionBoardStringBox = new gcn::TextBox();
+	txtExpansionBoardStringBox = new gcn::TextField();
 	txtExpansionBoardStringBox->setSize(200, txtExpansionBoardStringBox->getHeight());
 	txtExpansionBoardStringBox->setId("txtExpansionBoardStringBox");
 	txtExpansionBoardStringBox->setBaseColor(gui_base_color);
@@ -1299,9 +1314,9 @@ void InitPanelExpansions(const config_category& category)
 	grpExpansionBoard->add(cboScsiRomFile, chkScsiRomSelected->getX(), chkScsiRomSelected->getY());
 	grpExpansionBoard->add(btnScsiRomChooser, cboScsiRomFile->getX() + cboScsiRomFile->getWidth() + DISTANCE_NEXT_X, cboScsiRomFile->getY());
 	grpExpansionBoard->add(cboScsiRomSubSelect, posX, cboScsiRomSelect->getY() + cboScsiRomSelect->getHeight() + DISTANCE_NEXT_Y);
-	grpExpansionBoard->add(chkScsiRomFileAutoboot, chkScsiRomSelected->getX(), cboScsiRomSubSelect->getY());
-	grpExpansionBoard->add(chkScsiRomFilePcmcia, chkScsiRomFileAutoboot->getX() + chkScsiRomFileAutoboot->getWidth(), chkScsiRomFileAutoboot->getY());
-	grpExpansionBoard->add(txtExpansionBoardStringBox, chkScsiRomFileAutoboot->getX(), chkScsiRomFileAutoboot->getY());
+	grpExpansionBoard->add(chkScsiRomFileAutoboot, cboScsiRomSelectNum->getX(), cboScsiRomSelectNum->getY() + cboScsiRomSelectNum->getHeight() + DISTANCE_NEXT_Y);
+	grpExpansionBoard->add(chkScsiRomFilePcmcia, chkScsiRomFileAutoboot->getX() + chkScsiRomFileAutoboot->getWidth() + 2, chkScsiRomFileAutoboot->getY());
+	grpExpansionBoard->add(txtExpansionBoardStringBox, chkScsiRomFileAutoboot->getX(), chkScsiRomFileAutoboot->getY() + chkScsiRomFileAutoboot->getHeight() + DISTANCE_NEXT_Y);
 	grpExpansionBoard->add(chkExpansionBoardCheckbox, chkScsiRomFileAutoboot->getX(), chkScsiRomFileAutoboot->getY() + chkScsiRomFileAutoboot->getHeight() + DISTANCE_NEXT_Y);
 	grpExpansionBoard->add(cboExpansionBoardItemSelector, posX, cboScsiRomSubSelect->getY() + cboScsiRomSubSelect->getHeight() + DISTANCE_NEXT_Y);
 	grpExpansionBoard->add(cboExpansionBoardSelector, chkScsiRomSelected->getX(), cboExpansionBoardItemSelector->getY());

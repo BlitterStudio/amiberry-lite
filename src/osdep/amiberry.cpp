@@ -134,6 +134,7 @@ amiberry_hotkey quit_key;
 amiberry_hotkey action_replay_key;
 amiberry_hotkey fullscreen_key;
 amiberry_hotkey minimize_key;
+amiberry_hotkey right_amiga_key;
 SDL_GameControllerButton vkbd_button;
 
 bool lctrl_pressed, rctrl_pressed, lalt_pressed, ralt_pressed, lshift_pressed, rshift_pressed, lgui_pressed, rgui_pressed;
@@ -186,47 +187,61 @@ std::vector<int> parse_color_string(const std::string& input)
 	return result;
 }
 
-static amiberry_hotkey get_hotkey_from_config(std::string config_option)
+static amiberry_hotkey get_hotkey_from_config(const std::string& config_option)
 {
 	amiberry_hotkey hotkey = {};
-	std::string delimiter = "+";
-	std::string lctrl = "LCtrl";
-	std::string rctrl = "RCtrl";
-	std::string lalt = "LAlt";
-	std::string ralt = "RAlt";
-	std::string lshift = "LShift";
-	std::string rshift = "RShift";
-	std::string lgui = "LGUI";
-	std::string rgui = "RGUI";
-	
+
 	if (config_option.empty()) return hotkey;
 
-	size_t pos = 0;
-	std::string token;
-	while ((pos = config_option.find(delimiter)) != std::string::npos)
-	{
-		token = config_option.substr(0, pos);
-		if (token == lctrl)
-			hotkey.modifiers.lctrl = true;
-		if (token == rctrl)
-			hotkey.modifiers.rctrl = true;
-		if (token == lalt)
-			hotkey.modifiers.lalt = true;
-		if (token == ralt)
-			hotkey.modifiers.ralt = true;
-		if (token == lshift)
-			hotkey.modifiers.lshift = true;
-		if (token == rshift)
-			hotkey.modifiers.rshift = true;
-		if (token == lgui)
-			hotkey.modifiers.lgui = true;
-		if (token == rgui)
-			hotkey.modifiers.rgui = true;
+	// Use static lookup tables to avoid repeated string allocations and comparisons
+	static const std::unordered_map<std::string, std::function<void(hotkey_modifiers&)>> modifier_map = {
+		{"LCtrl", [](hotkey_modifiers& m) { m.lctrl = true; }},
+		{"RCtrl", [](hotkey_modifiers& m) { m.rctrl = true; }},
+		{"LAlt", [](hotkey_modifiers& m) { m.lalt = true; }},
+		{"RAlt", [](hotkey_modifiers& m) { m.ralt = true; }},
+		{"LShift", [](hotkey_modifiers& m) { m.lshift = true; }},
+		{"RShift", [](hotkey_modifiers& m) { m.rshift = true; }},
+		{"LGUI", [](hotkey_modifiers& m) { m.lgui = true; }},
+		{"RGUI", [](hotkey_modifiers& m) { m.rgui = true; }}
+	};
 
-		config_option.erase(0, pos + delimiter.length());
+	static const std::unordered_map<std::string, const char*> sdl2_name_map = {
+		{"LCtrl", "Left Ctrl"},
+		{"RCtrl", "Right Ctrl"},
+		{"LAlt", "Left Alt"},
+		{"RAlt", "Right Alt"},
+		{"LShift", "Left Shift"},
+		{"RShift", "Right Shift"},
+		{"LGUI", "Left GUI"},
+		{"RGUI", "Right GUI"}
+	};
+
+	// Parse tokens more efficiently without modifying the original string
+	size_t start = 0;
+	size_t pos = 0;
+	constexpr char delimiter = '+';
+
+	while ((pos = config_option.find(delimiter, start)) != std::string::npos)
+	{
+		const std::string token = config_option.substr(start, pos - start);
+
+		// Use lookup table for O(1) modifier detection
+		const auto it = modifier_map.find(token);
+		if (it != modifier_map.end()) {
+			it->second(hotkey.modifiers);
+		}
+
+		start = pos + 1;
 	}
-	hotkey.key_name = config_option;
-	hotkey.scancode = SDL_GetScancodeFromName(hotkey.key_name.c_str());
+
+	// The remaining part is the key name
+	hotkey.key_name = config_option.substr(start);
+
+	// Use lookup table for SDL2 name mapping
+	const auto sdl2_it = sdl2_name_map.find(hotkey.key_name);
+	const char* sdl2_key_name = (sdl2_it != sdl2_name_map.end()) ? sdl2_it->second : hotkey.key_name.c_str();
+
+	hotkey.scancode = SDL_GetScancodeFromName(sdl2_key_name);
 	hotkey.button = SDL_GameControllerGetButtonFromString(hotkey.key_name.c_str());
 	
 	return hotkey;
@@ -277,6 +292,9 @@ static void set_key_configs(const uae_prefs* p)
 	if (strncmp(p->minimize, "", 1) != 0)
 		minimize_key = get_hotkey_from_config(p->minimize);
 
+	if (strncmp(p->right_amiga, "", 1) != 0)
+		right_amiga_key = get_hotkey_from_config(p->right_amiga);
+
 	vkbd_button = SDL_GameControllerGetButtonFromString(p->vkbd_toggle);
 	if (vkbd_button == SDL_CONTROLLER_BUTTON_INVALID)
 		vkbd_button = SDL_GameControllerGetButtonFromString(amiberry_options.default_vkbd_toggle);
@@ -300,9 +318,10 @@ extern void set_last_active_config(const char* filename);
 std::string home_dir;
 std::string current_dir;
 
-#ifndef __MACH__
+#if defined(__linux__)
 #include <linux/kd.h>
-#else
+#endif
+#ifdef __APPLE__
 #include <CoreFoundation/CoreFoundation.h>
 #endif
 #include <sys/ioctl.h>
@@ -652,7 +671,6 @@ void updatemouseclip(AmigaMonitor* mon)
 		mon->amigawinclip_rect = mon->amigawin_rect;
 		if (!isfullscreen()) {
 			GetWindowRect(mon->amiga_window, &mon->amigawinclip_rect);
-
 			// Too small or invalid?
 			if (mon->amigawinclip_rect.w <= mon->amigawinclip_rect.x + 7 || mon->amigawinclip_rect.h <= mon->amigawinclip_rect.y + 7)
 				mon->amigawinclip_rect = mon->amigawin_rect;
@@ -830,15 +848,12 @@ static void amiberry_active(const AmigaMonitor* mon, const int is_minimized)
 	if (sound_closed != 0) {
 		if (sound_closed < 0) {
 			resumesoundpaused();
-		}
-		else
-		{
+		} else {
 			if (currprefs.active_nocapture_pause)
 			{
 				if (mouseactive)
 					resumepaused(2);
-			}
-			else if (currprefs.minimized_pause && !currprefs.inactive_pause)
+			} else if (currprefs.minimized_pause && !currprefs.inactive_pause)
 				resumepaused(1);
 			else if (currprefs.inactive_pause)
 				resumepaused(2);
@@ -847,9 +862,10 @@ static void amiberry_active(const AmigaMonitor* mon, const int is_minimized)
 	}
 	getcapslock();
 	wait_keyrelease();
-	inputdevice_acquire(TRUE);
-	if (isfullscreen() > 0 || currprefs.capture_always)
+	if (isfullscreen() > 0 || currprefs.capture_always) {
 		setmouseactive(mon->monitor_id, 1);
+		inputdevice_acquire(TRUE);
+	}
 	clipboard_active(1, 1);
 }
 
@@ -1011,13 +1027,10 @@ void activationtoggle(const int monid, const bool inactiveonly)
 		if ((isfullscreen() > 0) || (isfullscreen() < 0 && currprefs.minimize_inactive)) {
 			disablecapture();
 			minimizewindow(monid);
-		}
-		else 
-		{
+		} else {
 			setmouseactive(monid, 0);
 		}
-	}
-	else {
+	} else {
 		if (!inactiveonly)
 			setmouseactive(monid, 1);
 	}
@@ -1319,13 +1332,13 @@ static void touch_event(const unsigned long id, const int pressrel, const int x,
 	tablet_touch(id, pressrel, x, y, rcontrol);
 }
 
-void handle_focus_gained_event(const AmigaMonitor* mon)
+static void handle_focus_gained_event(const AmigaMonitor* mon)
 {
 	amiberry_active(mon, minimized);
 	unsetminimized(mon->monitor_id);
 }
 
-void handle_minimized_event(const AmigaMonitor* mon)
+static void handle_minimized_event(const AmigaMonitor* mon)
 {
 	if (!minimized)
 	{
@@ -1335,13 +1348,13 @@ void handle_minimized_event(const AmigaMonitor* mon)
 	}
 }
 
-void handle_restored_event(const AmigaMonitor* mon)
+static void handle_restored_event(const AmigaMonitor* mon)
 {
 	amiberry_active(mon, minimized);
 	unsetminimized(mon->monitor_id);
 }
 
-void handle_moved_event(AmigaMonitor* mon)
+static void handle_moved_event(AmigaMonitor* mon)
 {
 	if (isfullscreen() <= 0)
 	{
@@ -1350,7 +1363,7 @@ void handle_moved_event(AmigaMonitor* mon)
 	}
 }
 
-void handle_enter_event()
+static void handle_enter_event()
 {
 	mouseinside = true;
 	if (currprefs.input_tablet > 0 && currprefs.input_mouse_untrap & MOUSEUNTRAP_MAGIC && isfullscreen() <= 0)
@@ -1360,26 +1373,26 @@ void handle_enter_event()
 	}
 }
 
-void handle_leave_event()
+static void handle_leave_event()
 {
 	mouseinside = false;
 }
 
-void handle_focus_lost_event(const AmigaMonitor* mon)
+static void handle_focus_lost_event(const AmigaMonitor* mon)
 {
 	amiberry_inactive(mon, minimized);
 	if (isfullscreen() <= 0 && currprefs.minimize_inactive)
 		minimizewindow(mon->monitor_id);
 }
 
-void handle_close_event()
+static void handle_close_event()
 {
 	wait_keyrelease();
 	inputdevice_unacquire();
 	uae_quit();
 }
 
-void handle_window_event(const SDL_Event& event, AmigaMonitor* mon)
+static void handle_window_event(const SDL_Event& event, AmigaMonitor* mon)
 {
 	switch (event.window.event)
 	{
@@ -1412,12 +1425,12 @@ void handle_window_event(const SDL_Event& event, AmigaMonitor* mon)
 	}
 }
 
-void handle_quit_event()
+static void handle_quit_event()
 {
 	uae_quit();
 }
 
-void handle_clipboard_update_event()
+static void handle_clipboard_update_event()
 {
 	if (currprefs.clipboard_sharing && SDL_HasClipboardText() == SDL_TRUE)
 	{
@@ -1427,7 +1440,7 @@ void handle_clipboard_update_event()
 	}
 }
 
-void handle_joy_device_event(const int which, const bool removed)
+static void handle_joy_device_event(const int which, const bool removed)
 {
 	const didata* existing_did = &di_joystick[which];
 	if (existing_did->guid.empty() || removed)
@@ -1441,7 +1454,7 @@ void handle_joy_device_event(const int which, const bool removed)
 	}
 }
 
-void handle_controller_button_event(const SDL_Event& event)
+static void handle_controller_button_event(const SDL_Event& event)
 {
 	const auto button = event.cbutton.button;
 	const auto state = event.cbutton.state == SDL_PRESSED;
@@ -1475,7 +1488,7 @@ void handle_controller_button_event(const SDL_Event& event)
 	}
 }
 
-void handle_joy_button_event(const SDL_Event& event)
+static void handle_joy_button_event(const SDL_Event& event)
 {
 	const auto button = event.jbutton.button;
 	const auto state = event.jbutton.state == SDL_PRESSED;
@@ -1508,7 +1521,7 @@ void handle_joy_button_event(const SDL_Event& event)
 	}
 }
 
-void handle_controller_axis_motion_event(const SDL_Event& event)
+static void handle_controller_axis_motion_event(const SDL_Event& event)
 {
 	const auto axis = event.caxis.axis;
 	const auto value = event.caxis.value;
@@ -1522,7 +1535,7 @@ void handle_controller_axis_motion_event(const SDL_Event& event)
 	}
 }
 
-void handle_joy_axis_motion_event(const SDL_Event& event)
+static void handle_joy_axis_motion_event(const SDL_Event& event)
 {
 	const auto axis = event.jaxis.axis;
 	const auto value = event.jaxis.value;
@@ -1537,7 +1550,7 @@ void handle_joy_axis_motion_event(const SDL_Event& event)
 	}
 }
 
-void handle_joy_hat_motion_event(const SDL_Event& event)
+static void handle_joy_hat_motion_event(const SDL_Event& event)
 {
 	const auto hat = event.jhat.hat;
 	const auto value = event.jhat.value;
@@ -1553,7 +1566,7 @@ void handle_joy_hat_motion_event(const SDL_Event& event)
 	}
 }
 
-void handle_key_event(const SDL_Event& event)
+static void handle_key_event(const SDL_Event& event)
 {
 	if (event.key.repeat != 0 || !isfocus() || (isfocus() < 2 && currprefs.input_tablet >= TABLET_MOUSEHACK && (currprefs.input_mouse_untrap & MOUSEUNTRAP_MAGIC)))
 		return;
@@ -1569,8 +1582,19 @@ void handle_key_event(const SDL_Event& event)
 			scancode = SDL_SCANCODE_F11;
 		}
 	}
-
+	if (key_swap_end_pgup) {
+		if (scancode == SDL_SCANCODE_END) {
+			scancode = SDL_SCANCODE_PAGEUP;
+		}
+		else if (scancode == SDL_SCANCODE_PAGEUP) {
+			scancode = SDL_SCANCODE_END;
+		}
+	}
 	if ((amiberry_options.rctrl_as_ramiga || currprefs.right_control_is_right_win_key) && scancode == SDL_SCANCODE_RCTRL)
+	{
+		scancode = SDL_SCANCODE_RGUI;
+	}
+	if (right_amiga_key.scancode && scancode == right_amiga_key.scancode)
 	{
 		scancode = SDL_SCANCODE_RGUI;
 	}
@@ -1582,7 +1606,7 @@ void handle_key_event(const SDL_Event& event)
 	}
 }
 
-void handle_finger_event(const SDL_Event& event)
+static void handle_finger_event(const SDL_Event& event)
 {
 	if (!isfocus() || event.tfinger.fingerId != 0)
 		return;
@@ -1597,7 +1621,7 @@ void handle_finger_event(const SDL_Event& event)
 	}
 }
 
-void handle_mouse_button_event(const SDL_Event& event, const AmigaMonitor* mon)
+static void handle_mouse_button_event(const SDL_Event& event, const AmigaMonitor* mon)
 {
 	const auto button = event.button.button;
 	const auto state = event.button.state == SDL_PRESSED;
@@ -1637,7 +1661,7 @@ void handle_mouse_button_event(const SDL_Event& event, const AmigaMonitor* mon)
 	}
 }
 
-void handle_finger_motion_event(const SDL_Event& event)
+static void handle_finger_motion_event(const SDL_Event& event)
 {
 	if (isfocus() && event.tfinger.fingerId == 0)
 	{
@@ -1646,7 +1670,7 @@ void handle_finger_motion_event(const SDL_Event& event)
 	}
 }
 
-void handle_mouse_motion_event(const SDL_Event& event, const AmigaMonitor* mon)
+static void handle_mouse_motion_event(const SDL_Event& event, const AmigaMonitor* mon)
 {
 	monitor_off = 0;
 
@@ -1702,7 +1726,7 @@ void handle_mouse_motion_event(const SDL_Event& event, const AmigaMonitor* mon)
 	}
 }
 
-void handle_mouse_wheel_event(const SDL_Event& event)
+static void handle_mouse_wheel_event(const SDL_Event& event)
 {
 	if (isfocus() <= 0) return;
 	
@@ -1723,7 +1747,7 @@ void handle_mouse_wheel_event(const SDL_Event& event)
 		setmousebuttonstate(0, 6, -1);
 }
 
-void handle_pen_event(const SDL_Event& event)
+static void handle_pen_event(const SDL_Event& event)
 {
 	//TODO Implement with SDL3 for Tablet support
 	//if (inputdevice_is_tablet() <= 0 && !currprefs.tablet_library && !is_touch_lightpen()) {
@@ -1751,7 +1775,7 @@ void handle_pen_event(const SDL_Event& event)
 	//}
 }
 
-void process_event(const SDL_Event& event)
+static void process_event(const SDL_Event& event)
 {
 	AmigaMonitor* mon = &AMonitors[0];
 
@@ -2209,7 +2233,6 @@ void target_fixup_options(uae_prefs* p)
 	if (p->rtgboards[0].rtgmem_type >= GFXBOARD_HARDWARE) {
 		p->rtg_hardwareinterrupt = false;
 		p->rtg_hardwaresprite = false;
-		p->rtgmatchdepth = false;
 		p->color_mode = 5;
 	}
 
@@ -2309,7 +2332,6 @@ void target_default_options(uae_prefs* p, const int type)
 		p->blankmonitors = false;
 		//p->powersavedisabled = true;
 		p->sana2 = false;
-		p->rtgmatchdepth = true;
 		p->gf[GF_RTG].gfx_filter_autoscale = RTG_MODE_SCALE;
 		p->rtgallowscaling = false;
 		p->rtgscaleaspectratio = -1;
@@ -2555,7 +2577,6 @@ void target_save_options(zfile* f, uae_prefs* p)
 
 	cfgfile_target_dwrite_bool (f, _T("midirouter"), p->midirouter);
 
-	cfgfile_target_dwrite_bool(f, _T("rtg_match_depth"), p->rtgmatchdepth);
 	cfgfile_target_dwrite_bool(f, _T("rtg_scale_allow"), p->rtgallowscaling);
 	cfgfile_target_dwrite(f, _T("rtg_scale_aspect_ratio"), _T("%d:%d"),
 		p->rtgscaleaspectratio >= 0 ? (p->rtgscaleaspectratio / ASPECTMULT) : -1,
@@ -2605,6 +2626,7 @@ void target_save_options(zfile* f, uae_prefs* p)
 	cfgfile_target_dwrite_str(f, _T("action_replay"), p->action_replay);
 	cfgfile_target_dwrite_str(f, _T("fullscreen_toggle"), p->fullscreen_toggle);
 	cfgfile_target_dwrite_str(f, _T("minimize"), p->minimize);
+	cfgfile_target_dwrite_str(f, _T("right_amiga"), p->right_amiga);
 
 	if (p->drawbridge_driver > 0)
 	{
@@ -2746,6 +2768,7 @@ static int target_parse_option_host(uae_prefs *p, const TCHAR *option, const TCH
 		|| cfgfile_string(option, value, "action_replay", p->action_replay, sizeof p->action_replay)
 		|| cfgfile_string(option, value, "fullscreen_toggle", p->fullscreen_toggle, sizeof p->fullscreen_toggle)
 		|| cfgfile_string(option, value, "minimize", p->minimize, sizeof p->minimize)
+		|| cfgfile_string(option, value, "right_amiga", p->right_amiga, sizeof p->right_amiga)
 		|| cfgfile_intval(option, value, _T("cpu_idle"), &p->cpu_idle, 1))
 		return 1;
 
@@ -2771,7 +2794,7 @@ static int target_parse_option_host(uae_prefs *p, const TCHAR *option, const TCH
 		return 1;
 	}
 	
-	if (cfgfile_yesno(option, value, _T("rtg_match_depth"), &p->rtgmatchdepth))
+	if (cfgfile_yesno(option, value, _T("rtg_match_depth"), &tbool))
 		return 1;
 	if (cfgfile_yesno(option, value, _T("rtg_scale_allow"), &p->rtgallowscaling))
 		return 1;
@@ -4728,7 +4751,7 @@ static int checkversion(TCHAR* vs, int* verp)
 	int ver;
 	if (_tcslen(vs) < 10)
 		return 0;
-	if (_tcsncmp(vs, _T("Amiberry "), 7))
+	if (_tcsncmp(vs, _T("Amiberry "), 256))
 		return 0;
 	vs += 7;
 	ver = parseversion(&vs) << 16;
@@ -4775,6 +4798,7 @@ static void initialize_ini()
 	}
 
 	regqueryint(NULL, _T("KeySwapBackslashF11"), &key_swap_hack);
+	regqueryint(NULL, _T("KeyEndPageUp"), &key_swap_end_pgup);
 
 	read_rom_list(true);
 	load_keyring(nullptr, nullptr);
@@ -4784,12 +4808,12 @@ static void makeverstr(TCHAR* s)
 {
 	if (_tcslen(AMIBERRYBETA) > 0) {
 		if (AMIBERRYPUBLICBETA == 2) {
-			_sntprintf(BetaStr, sizeof BetaStr, _T(" (DevAlpha %s, %d.%02d.%02d)"), AMIBERRYBETA, GETBDY(AMIBERRYDATE), 
-				GETBDM(AMIBERRYDATE), GETBDD(AMIBERRYDATE));
+			_sntprintf(BetaStr, sizeof BetaStr, _T(" (DevAlpha %s, %d.%02d.%02d)"), AMIBERRYBETA,
+				GETBDY(AMIBERRYDATE), GETBDM(AMIBERRYDATE), GETBDD(AMIBERRYDATE));
 		}
 		else {
-			_sntprintf(BetaStr, sizeof BetaStr, _T(" (%sBeta %s, %d.%02d.%02d)"), AMIBERRYPUBLICBETA > 0 ? _T("Public ") : _T(""), AMIBERRYBETA, GETBDY(AMIBERRYDATE), 
-				GETBDM(AMIBERRYDATE), GETBDD(AMIBERRYDATE));
+			_sntprintf(BetaStr, sizeof BetaStr, _T(" (%sBeta %s, %d.%02d.%02d)"), AMIBERRYPUBLICBETA > 0 ? _T("Public ") : _T(""), AMIBERRYBETA,
+				GETBDY(AMIBERRYDATE), GETBDM(AMIBERRYDATE), GETBDD(AMIBERRYDATE));
 		}
 #ifdef _WIN64
 		_tcscat(BetaStr, _T(" 64-bit"));
@@ -4858,6 +4882,7 @@ int main(int argc, char* argv[])
 	}
 	create_missing_amiberry_folders();
 
+	makeverstr(VersionStr);
 	// Parse command line and remove used amiberry specific args
 	// and modify both argc & argv accordingly
 	if (!parse_amiberry_cmd_line(&argc, argv, 1))
@@ -4954,7 +4979,7 @@ int main(int argc, char* argv[])
 	normalcursor = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_ARROW);
 	clipboard_init();
 
-#ifndef __MACH__
+#if defined( __linux__)
 	// set capslock state based upon current "real" state
 	ioctl(0, KDGKBLED, &kbd_flags);
 	ioctl(0, KDGETLED, &kbd_led_status);
@@ -5022,7 +5047,7 @@ int main(int argc, char* argv[])
 
 	gpiod_chip_close(chip);
 #endif
-#ifndef __MACH__
+#if defined(__linux__)
 	// restore keyboard LEDs to normal state
 	ioctl(0, KDSETLED, 0xFF);
 #else
@@ -5324,7 +5349,7 @@ void target_setdefaultstatefilename(const TCHAR* name)
 	else {
 		const TCHAR* p2 = _tcsrchr(name, '\\');
 		const TCHAR* p3 = _tcsrchr(name, '/');
-		const TCHAR* p1 = NULL;
+		const TCHAR* p1 = nullptr;
 		if (p2 >= p3) {
 			p1 = p2;
 		}

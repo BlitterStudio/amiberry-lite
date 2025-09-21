@@ -35,7 +35,6 @@ static gcn::DropDown* cboBoard;
 static gcn::Label* lblGfxmem;
 static gcn::Label* lblGfxsize;
 static gcn::Slider* sldGfxmem;
-static gcn::CheckBox* chkRtgMatchDepth;
 static gcn::CheckBox* chkRtgAutoscale;
 static gcn::CheckBox* chkRtgAllowScaling;
 static gcn::CheckBox* chkRtgAlwaysCenter;
@@ -80,9 +79,6 @@ public:
 		{
 			changed_prefs.rtgboards[0].rtgmem_size = memsizes[msi_gfx[static_cast<int>(sldGfxmem->getValue())]];
 		}
-
-		else if (action_event.getSource() == chkRtgMatchDepth)
-			changed_prefs.rtgmatchdepth = chkRtgMatchDepth->isSelected();
 
 		else if (action_event.getSource() == chkRtgAutoscale)
 		{
@@ -191,13 +187,6 @@ void InitPanelRTG(const config_category& category)
 	sldGfxmem->setStepLength(1);
 	sldGfxmem->setId("sldGfxmem");
 	sldGfxmem->addActionListener(rtg_action_listener);
-
-	chkRtgMatchDepth = new gcn::CheckBox("Match host and RTG color depth if possible");
-	chkRtgMatchDepth->setId("chkRtgMatchDepth");
-	chkRtgMatchDepth->setBaseColor(gui_base_color);
-	chkRtgMatchDepth->setBackgroundColor(gui_background_color);
-	chkRtgMatchDepth->setForegroundColor(gui_foreground_color);
-	chkRtgMatchDepth->addActionListener(rtg_action_listener);
 
 	chkRtgAutoscale = new gcn::CheckBox("Scale if smaller than display size setting");
 	chkRtgAutoscale->setId("chkRtgAutoscale");
@@ -311,9 +300,6 @@ void InitPanelRTG(const config_category& category)
 	category.panel->add(cboRtg32bitModes, cboRtg16bitModes->getX(), posY);
 	posY += sldGfxmem->getHeight() + DISTANCE_NEXT_Y * 2;
 
-	category.panel->add(chkRtgMatchDepth, DISTANCE_BORDER, posY);
-	posY += chkRtgMatchDepth->getHeight() + DISTANCE_NEXT_Y;
-
 	category.panel->add(chkRtgAutoscale, DISTANCE_BORDER, posY);
 	posY += chkRtgAutoscale->getHeight() + DISTANCE_NEXT_Y;
 	
@@ -351,7 +337,6 @@ void ExitPanelRTG()
 	delete lblGfxmem;
 	delete sldGfxmem;
 	delete lblGfxsize;
-	delete chkRtgMatchDepth;
 	delete chkRtgAutoscale;
 	delete chkRtgAllowScaling;
 	delete chkRtgAlwaysCenter;
@@ -413,10 +398,6 @@ void RefreshPanelRTG()
 		sldGfxmem->setValue(mem_size);
 		lblGfxsize->setCaption(memsize_names[msi_gfx[mem_size]]);
 	}
-
-	// We always match depth, so this option is disabled
-	chkRtgMatchDepth->setEnabled(false);
-	chkRtgMatchDepth->setSelected(changed_prefs.rtgmatchdepth);
 
 	// We always scale, so this option is disabled
 	chkRtgAutoscale->setEnabled(false);

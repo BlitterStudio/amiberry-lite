@@ -476,6 +476,7 @@ struct rtgboardconfig
 	uae_u32 rtgmem_size;
 	int device_order;
 	int monitor_id;
+	bool autoswitch;
 };
 struct boardloadfile
 {
@@ -1013,7 +1014,6 @@ struct uae_prefs
 	bool minimized_nosound;
 	int minimized_input;
 
-	bool rtgmatchdepth;
 	bool rtgallowscaling;
 	int rtgscaleaspectratio;
 	int rtgvblankrate;
@@ -1046,6 +1046,7 @@ struct uae_prefs
 	TCHAR action_replay[256];
 	TCHAR fullscreen_toggle[256];
 	TCHAR minimize[256];
+	TCHAR right_amiga[256];
 
 	/* input */
 

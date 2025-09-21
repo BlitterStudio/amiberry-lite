@@ -1279,10 +1279,6 @@ void gfx_unlock_picasso(const int monid, const bool dorender)
 
 static bool canmatchdepth(void)
 {
-	if (!currprefs.rtgmatchdepth)
-		return false;
-	if (currprefs.gfx_api >= 2)
-		return false;
 	return true;
 }
 
@@ -1651,7 +1647,6 @@ int check_prefs_changed_gfx()
 	c |= currprefs.gui_alwaysontop != changed_prefs.gui_alwaysontop ? 2 : 0;
 	c |= currprefs.borderless != changed_prefs.borderless ? 32 : 0;
 	c |= currprefs.blankmonitors != changed_prefs.blankmonitors ? 32 : 0;
-	c |= currprefs.rtgmatchdepth != changed_prefs.rtgmatchdepth ? 2 : 0;
 	c |= currprefs.rtgallowscaling != changed_prefs.rtgallowscaling ? (2 | 8 | 64) : 0;
 	c |= currprefs.rtgscaleaspectratio != changed_prefs.rtgscaleaspectratio ? (8 | 64) : 0;
 	c |= currprefs.rtgvblankrate != changed_prefs.rtgvblankrate ? 8 : 0;
@@ -1800,7 +1795,6 @@ int check_prefs_changed_gfx()
 		currprefs.gui_alwaysontop = changed_prefs.gui_alwaysontop;
 		currprefs.borderless = changed_prefs.borderless;
 		currprefs.blankmonitors = changed_prefs.blankmonitors;
-		currprefs.rtgmatchdepth = changed_prefs.rtgmatchdepth;
 		currprefs.rtgallowscaling = changed_prefs.rtgallowscaling;
 		currprefs.rtgscaleaspectratio = changed_prefs.rtgscaleaspectratio;
 		currprefs.rtgvblankrate = changed_prefs.rtgvblankrate;

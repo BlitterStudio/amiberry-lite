@@ -378,7 +378,7 @@ static bool SDL2_alloctexture(int monid, int w, int h, const int depth)
 			SDL_QueryTexture(amiga_texture, &format, nullptr, &width, &height);
 			if (width == -w && height == -h && (depth == 16 && format == SDL_PIXELFORMAT_RGB565) || (depth == 32 && format == SDL_PIXELFORMAT_RGBA32))
 			{
-				set_scaling_option(&currprefs, width, height);
+				set_scaling_option(monid, &currprefs, width, height);
 				return true;
 			}
 		}
@@ -2776,7 +2776,7 @@ bool target_graphics_buffer_update(const int monid, const bool force)
 				render_quad = { -(w - h) / 2, (w - h) / 2, w, h };
 				crop_rect = { -(w - h) / 2, (w - h) / 2, w, h };
 			}
-			set_scaling_option(&currprefs, w, h);
+			set_scaling_option(monid, &currprefs, w, h);
 		}
 		else
 			return false;
@@ -2849,7 +2849,7 @@ bool target_graphics_buffer_update(const int monid, const bool force)
 					crop_rect = { -(w - h) / 2, (w - h) / 2, w, h };
 				}
 			}
-			set_scaling_option(&currprefs, scaled_width, scaled_height);
+			set_scaling_option(monid, &currprefs, scaled_width, scaled_height);
 		}
 		else
 		{

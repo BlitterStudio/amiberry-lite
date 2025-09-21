@@ -142,7 +142,7 @@ static int safetycheck(FILE* h, const char* name, uae_u64 offset, uae_u8* buf, i
 			return -8;
 		}
 		if (mounted < 0) {
-			write_log("hd ignored, NTFS partitions\n");
+			write_log("NTFS partitions\n");
 			return 0;
 		}
 		if (harddrive_dangerous == 0x1234dead)
@@ -253,7 +253,6 @@ int hdf_open_target(struct hardfiledata *hfd, const TCHAR *pname)
 #ifdef __MACH__
 		}
 #endif
-
 		size &= ~(hfd->ci.blocksize - 1);
 		hfd->physsize = hfd->virtsize = size;
 		if (hfd->physsize < hfd->ci.blocksize || hfd->physsize == 0) {

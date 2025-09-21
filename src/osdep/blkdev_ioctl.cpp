@@ -12,13 +12,10 @@
 #include "sysdeps.h"
 
 #include "options.h"
-#include "traps.h"
-#include "uae.h"
 #include "threaddep/thread.h"
 #include "blkdev.h"
 #include "scsidev.h"
 #include "gui.h"
-#include "audio.h"
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -26,6 +23,7 @@
 #include <sys/stat.h>
 
 #ifdef __MACH__
+// macOS
 #include <errno.h>
 #include <IOKit/storage/IODVDMediaBSDClient.h>
 #include <IOKit/storage/IODVDMedia.h>
@@ -33,11 +31,20 @@
 #include <IOKit/storage/IOCDMediaBSDClient.h>
 #include <IOKit/storage/IOCDMedia.h>
 #include <IOKit/storage/IOCDTypes.h>
+
+#elif defined(__FreeBSD__)
+// FreeBSD
+#include <sys/cdio.h>
+#include <cam/scsi/scsi_all.h>
+#include <sys/errno.h>
+
 #else
+// Linux
 #include <linux/cdrom.h>
 #include <linux/hdreg.h>
 #include <linux/errno.h>
 #include <scsi/sg.h>
+
 #endif
 
 #include <cstring>

@@ -8,7 +8,6 @@
 #endif
 #include "threaddep/thread.h"
 #include "options.h"
-#include "traps.h"
 #include "sana2.h"
 #include "uae/slirp.h"
 #include "gui.h"
@@ -264,7 +263,7 @@ void ethernet_close_driver (struct netdriverdata *ndd)
 	netmode = 0;
 }
 
-int ethernet_getdatalenght (struct netdriverdata *ndd)
+int ethernet_getdatalength (struct netdriverdata *ndd)
 {
 	switch (ndd->type)
 	{

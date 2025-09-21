@@ -14,7 +14,6 @@
 
 #include "options.h"
 #include "memory.h"
-#include "custom.h"
 #include "newcpu.h"
 #include "a2065.h"
 #include "ethernet.h"
@@ -22,7 +21,6 @@
 #include "savestate.h"
 #include "autoconf.h"
 #include "rommgr.h"
-#include "debug.h"
 #include "devices.h"
 #include "threaddep/thread.h"
 
@@ -630,7 +628,7 @@ static void chip_init2(void)
 	ethernet_close(td, sysdata);
 	if (td != NULL) {
 		if (!sysdata)
-			sysdata = xcalloc(uae_u8, ethernet_getdatalenght(td));
+			sysdata = xcalloc(uae_u8, ethernet_getdatalength(td));
 		if (!ethernet_open(td, sysdata, NULL, gotfunc, getfunc, prom || fakeprom, fakemac)) {
 			write_log(_T("7990: failed to initialize winpcap driver\n"));
 		}
@@ -1044,7 +1042,9 @@ static void a2065_reset(int hardreset)
 	for (int i = 0; i < RAP_SIZE; i++)
 		csr[i] = 0;
 	csr[0] = CSR0_STOP;
-	csr[1] = csr[2] = csr[3] = 0;
+	csr[1] = 0;
+	csr[2] = 0;
+	csr[3] = 0;
 	csr[4] = 0x0115;
 	dbyteswap = 0;
 	rap = 0;

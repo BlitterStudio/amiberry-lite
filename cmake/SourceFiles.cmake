@@ -215,6 +215,22 @@ set(SOURCE_FILES
         src/osdep/vpar.cpp
         src/sounddep/sound.cpp
         src/threaddep/threading.cpp
+        src/osdep/gui/main_window.cpp
+        src/osdep/vkbd/vkbd.cpp
+        src/newcpu.cpp
+        src/newcpu_common.cpp
+        src/readcpu.cpp
+        src/cpudefs.cpp
+        src/cpustbl.cpp
+        src/cpuemu_0.cpp
+        src/cpuemu_4.cpp
+        src/cpuemu_11.cpp
+        src/cpuemu_13.cpp
+        src/cpuemu_40.cpp
+        src/cpuemu_44.cpp
+)
+
+set (GUISAN_GUI_FILES
         src/osdep/gui/ControllerMap.cpp
         src/osdep/gui/CreateFolder.cpp
         src/osdep/gui/SelectorEntry.cpp
@@ -255,20 +271,7 @@ set(SOURCE_FILES
         src/osdep/gui/PanelThemes.cpp
         src/osdep/gui/PanelVirtualKeyboard.cpp
         src/osdep/gui/PanelWHDLoad.cpp
-        src/osdep/gui/main_window.cpp
         src/osdep/gui/Navigation.cpp
-        src/osdep/vkbd/vkbd.cpp
-        src/newcpu.cpp
-        src/newcpu_common.cpp
-        src/readcpu.cpp
-        src/cpudefs.cpp
-        src/cpustbl.cpp
-        src/cpuemu_0.cpp
-        src/cpuemu_4.cpp
-        src/cpuemu_11.cpp
-        src/cpuemu_13.cpp
-        src/cpuemu_40.cpp
-        src/cpuemu_44.cpp
 )
 
 set(PCEM_SOURCE_FILES
@@ -331,6 +334,14 @@ set(PCEM_SOURCE_FILES
         src/pcem/x87_timings.cpp
 )
 
+if (USE_IMGUI)
+    message("Using ImGui for GUI")
+    list(APPEND SOURCE_FILES external/ImGuiFileDialog/ImGuiFileDialog.cpp)
+else ()
+    message("Using libguisan for GUI")
+    list(APPEND SOURCE_FILES ${GUISAN_GUI_FILES})
+endif ()
+
 if (USE_PCEM)
     message(STATUS "PCem support enabled")
     list(APPEND SOURCE_FILES ${PCEM_SOURCE_FILES})
@@ -351,8 +362,9 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
         MACOSX_BUNDLE_BUNDLE_NAME "Amiberry-Lite"
         MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION}
         MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
-        MACOSX_BUNDLE_COPYRIGHT "(c) 2016-2025 Dimitris Panokostas"
+        MACOSX_BUNDLE_COPYRIGHT "(c) 2025 Dimitris Panokostas"
 )
+
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE
         _FILE_OFFSET_BITS=64
@@ -396,10 +408,15 @@ target_include_directories(${PROJECT_NAME} PRIVATE
         src/include
         src/threaddep
         src/archivers
-        external/libguisan/include
         external/mt32emu/src
         external/floppybridge/src
 )
+
+if (USE_IMGUI)
+    target_include_directories(${PROJECT_NAME} PRIVATE external/imgui external/ImGuiFileDialog)
+else()
+    target_include_directories(${PROJECT_NAME} PRIVATE external/libguisan/include)
+endif()
 
 # Install the executable
 install(TARGETS ${PROJECT_NAME}

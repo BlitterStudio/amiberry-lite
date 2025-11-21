@@ -5,10 +5,17 @@ on:
   push:
   pull_request:
 
+# Set least-privilege defaults for all jobs
+permissions:
+  contents: read
+
 jobs:
 
   build-debian-amd64:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
     strategy:
       matrix:
         include:
@@ -56,6 +63,9 @@ jobs:
 
   build-debian-arm64:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
     strategy:
       matrix:
         include:
@@ -103,6 +113,9 @@ jobs:
 
   build-debian-armhf:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
     strategy:
       matrix:
         include:
@@ -152,6 +165,12 @@ jobs:
     needs: [build-debian-amd64, build-debian-armhf, build-debian-arm64]
     runs-on: ubuntu-latest
     if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+    # Elevated permissions only where needed for creating a release
+    permissions:
+      contents: write
+      actions: read
+      pull-requests: read
+      issues: read
     steps:
       - uses: actions/checkout@v4
 
@@ -186,6 +205,12 @@ jobs:
     needs: [build-debian-amd64, build-debian-armhf, build-debian-arm64]
     runs-on: ubuntu-latest
     if: github.ref_type == 'tag' && startsWith(github.ref_name, 'preview-v')
+    # Elevated permissions only where needed for creating a prerelease
+    permissions:
+      contents: write
+      actions: read
+      pull-requests: read
+      issues: read
     steps:
       - uses: actions/checkout@v4
 

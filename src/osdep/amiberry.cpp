@@ -57,6 +57,7 @@
 #include "threaddep/thread.h"
 #include "uae/uae.h"
 #include "sana2.h"
+#include "gui/gui_handling.h"
 
 #ifdef __MACH__
 #include <string>
@@ -467,7 +468,21 @@ static int sleep_millis2(int ms, const bool main)
 	return 0;
 }
 
-void sleep_micros (const int ms)
+int busywait;
+
+int target_sleep_nanos(int us)
+{
+	if (us < 0)
+		return 800; // Microseconds threshold
+
+	struct timespec req;
+	req.tv_sec = us / 1000000;
+	req.tv_nsec = (us % 1000000) * 1000;
+	nanosleep(&req, nullptr);
+	return 0;
+}
+
+void sleep_micros(const int ms)
 {
 	usleep(ms);
 }
@@ -567,6 +582,9 @@ bool setpaused(const int priority)
 	const AmigaMonitor* mon = &AMonitors[0];
 	if (pause_emulation > priority)
 		return false;
+	if (!pause_emulation) {
+		wait_keyrelease();
+	}
 	pause_emulation = priority;
 	devices_pause();
 	setsoundpaused();
@@ -1332,8 +1350,105 @@ static void tablet_touch(unsigned long id, int pressrel, const int x, const int 
 
 static void touch_event(const unsigned long id, const int pressrel, const int x, const int y, const SDL_Rect* rcontrol)
 {
-	// No lightpen support (yet?)
-	tablet_touch(id, pressrel, x, y, rcontrol);
+	if (is_touch_lightpen()) {
+		//tablet_lightpen(x, y, -1, -1, pressrel, pressrel > 0, true, dinput_lightpen(), -1);
+	}
+	else {
+		tablet_touch(id, pressrel, x, y, rcontrol);
+	}
+}
+
+static bool hasresizelimit(struct AmigaMonitor* mon)
+{
+	if (!mon->ratio_sizing || !mon->ratio_width || !mon->ratio_height)
+		return false;
+	return true;
+}
+
+static int canstretch(const AmigaMonitor* mon)
+{
+	if (isfullscreen() != 0)
+		return 0;
+	if (!mon->screen_is_picasso) {
+		if (!currprefs.gfx_windowed_resize)
+			return 0;
+		if (currprefs.gf[GF_NORMAL].gfx_filter_autoscale == AUTOSCALE_RESIZE)
+			return 0;
+		return 1;
+	}
+	else {
+		if (currprefs.rtgallowscaling || currprefs.gf[GF_RTG].gfx_filter_autoscale)
+			return 1;
+	}
+	return 0;
+}
+
+static void getsizemove(AmigaMonitor* mon)
+{
+	mon->ratio_width = mon->amigawin_rect.w;
+	mon->ratio_height = mon->amigawin_rect.h;
+	mon->ratio_adjust_x = mon->ratio_width - mon->mainwin_rect.w;
+	mon->ratio_adjust_y = mon->ratio_height - mon->mainwin_rect.h;
+	const Uint8* state = SDL_GetKeyboardState(nullptr);
+	mon->ratio_sizing = state[SDL_SCANCODE_LCTRL] || state[SDL_SCANCODE_RCTRL];
+}
+
+static int setsizemove(AmigaMonitor* mon, HWND hWnd)
+{
+	if (isfullscreen() > 0)
+		return 0;
+	if (mon->in_sizemove > 0)
+		return 0;
+	int iconic = (SDL_GetWindowFlags(hWnd) & SDL_WINDOW_MINIMIZED) != 0;
+	if (mon->amiga_window && !iconic) {
+		//write_log (_T("WM_WINDOWPOSCHANGED MAIN\n"));
+		GetWindowRect(mon->amiga_window, &mon->mainwin_rect);
+		updatewinrect(mon, false);
+		updatemouseclip(mon);
+		if (minimized) {
+			unsetminimized(mon->monitor_id);
+			amiberry_active(mon, minimized);
+		}
+		if (isfullscreen() == 0) {
+			static int store_xy;
+			SDL_Rect rc2;
+			GetWindowRect(mon->amiga_window, &rc2);
+			int left = rc2.x - mon->win_x_diff;
+			int top = rc2.y - mon->win_y_diff;
+			int width = rc2.w;
+			int height = rc2.h;
+			if (store_xy++) {
+				if (!mon->monitor_id) {
+					regsetint(nullptr, _T("MainPosX"), left);
+					regsetint(nullptr, _T("MainPosY"), top);
+				}
+				else {
+					TCHAR buf[100];
+					_sntprintf(buf, sizeof buf, _T("MainPosX_%d"), mon->monitor_id);
+					regsetint(nullptr, buf, left);
+					_sntprintf(buf, sizeof buf, _T("MainPosY_%d"), mon->monitor_id);
+					regsetint(nullptr, buf, top);
+				}
+			}
+			changed_prefs.gfx_monitor[mon->monitor_id].gfx_size_win.x = left;
+			changed_prefs.gfx_monitor[mon->monitor_id].gfx_size_win.y = top;
+			if (canstretch(mon)) {
+				int w = mon->mainwin_rect.w;
+				int h = mon->mainwin_rect.h;
+				if (w != changed_prefs.gfx_monitor[mon->monitor_id].gfx_size_win.width + mon->window_extra_width ||
+					h != changed_prefs.gfx_monitor[mon->monitor_id].gfx_size_win.height + mon->window_extra_height) {
+					changed_prefs.gfx_monitor[mon->monitor_id].gfx_size_win.width = w - mon->window_extra_width;
+					changed_prefs.gfx_monitor[mon->monitor_id].gfx_size_win.height = h - mon->window_extra_height;
+					set_config_changed();
+				}
+				//if (mon->hStatusWnd)
+				//	SendMessage(mon->hStatusWnd, WM_SIZE, SIZE_RESTORED, MAKELONG(w, h));
+			}
+
+			return 0;
+		}
+	}
+	return 1;
 }
 
 static void handle_focus_gained_event(const AmigaMonitor* mon)
@@ -1360,11 +1475,7 @@ static void handle_restored_event(const AmigaMonitor* mon)
 
 static void handle_moved_event(AmigaMonitor* mon)
 {
-	if (isfullscreen() <= 0)
-	{
-		updatewinrect(mon, false);
-		updatemouseclip(mon);
-	}
+	setsizemove(mon, mon->amiga_window);
 }
 
 static void handle_enter_event()
@@ -1782,6 +1893,41 @@ static void handle_pen_event(const SDL_Event& event)
 	//}
 }
 
+std::string get_filename_extension(const TCHAR* filename);
+
+static void handle_drop_file_event(const SDL_Event& event)
+{
+	char* dropped_file = event.drop.file;
+	const auto ext = get_filename_extension(dropped_file);
+
+	if (strcasecmp(ext.c_str(), ".uae") == 0)
+	{
+		// Load configuration file
+		uae_restart(&currprefs, 1, dropped_file);
+		gui_running = false;
+	}
+	else if (strcasecmp(ext.c_str(), ".adf") == 0 || strcasecmp(ext.c_str(), ".adz") == 0 || strcasecmp(ext.c_str(), ".dms") == 0 || strcasecmp(ext.c_str(), ".ipf") == 0 || strcasecmp(ext.c_str(), ".zip") == 0)
+	{
+		// Insert floppy image
+		disk_insert(0, dropped_file);
+	}
+	else if (strcasecmp(ext.c_str(), ".lha") == 0)
+	{
+		// WHDLoad archive
+		whdload_auto_prefs(&currprefs, dropped_file);
+		uae_restart(&currprefs, 0, nullptr);
+		gui_running = false;
+	}
+	else if (strcasecmp(ext.c_str(), ".cue") == 0 || strcasecmp(ext.c_str(), ".iso") == 0 || strcasecmp(ext.c_str(), ".chd") == 0)
+	{
+		// CD image
+		cd_auto_prefs(&currprefs, dropped_file);
+		uae_restart(&currprefs, 0, nullptr);
+		gui_running = false;
+	}
+	SDL_free(dropped_file);
+}
+
 static void process_event(const SDL_Event& event)
 {
 	AmigaMonitor* mon = &AMonitors[0];
@@ -1860,6 +2006,10 @@ static void process_event(const SDL_Event& event)
 			handle_mouse_wheel_event(event);
 			break;
 
+		case SDL_DROPFILE:
+			handle_drop_file_event(event);
+			break;
+
 		//TODO Implement with SDL3 for Tablet support
 			/* Pressure-sensitive pen events */
 			//  SDL_EVENT_PEN_PROXIMITY_IN = 0x1300,  /**< Pressure-sensitive pen has become available */
@@ -1886,24 +2036,6 @@ void update_clipboard()
 		SDL_SetClipboardText(clipboard_uae);
 		uae_clipboard_free_text(clipboard_uae);
 	}
-}
-
-static int canstretch(const AmigaMonitor* mon)
-{
-	if (isfullscreen() != 0)
-		return 0;
-	if (!mon->screen_is_picasso) {
-		if (!currprefs.gfx_windowed_resize)
-			return 0;
-		if (currprefs.gf[GF_NORMAL].gfx_filter_autoscale == AUTOSCALE_RESIZE)
-			return 0;
-		return 1;
-	}
-	else {
-		if (currprefs.rtgallowscaling || currprefs.gf[GF_RTG].gfx_filter_autoscale)
-			return 1;
-	}
-	return 0;
 }
 
 int handle_msgpump(bool vblank)
@@ -3581,6 +3713,9 @@ void save_amiberry_settings()
 	// GUI Theme
 	write_string_option("gui_theme", amiberry_options.gui_theme);
 
+	// Shader to use (if any)
+	write_string_option("shader", amiberry_options.shader);
+
 	// Paths
 	write_string_option("config_path", config_path);
 	write_string_option("controllers_path", controllers_path);
@@ -3781,6 +3916,7 @@ static int parse_amiberry_settings_line(const char *path, char *linea)
 		ret |= cfgfile_intval(option, value, "default_vkbd_transparency", &amiberry_options.default_vkbd_transparency, 1);
 		ret |= cfgfile_string(option, value, "default_vkbd_toggle", amiberry_options.default_vkbd_toggle, sizeof amiberry_options.default_vkbd_toggle);
 		ret |= cfgfile_string(option, value, "gui_theme", amiberry_options.gui_theme, sizeof amiberry_options.gui_theme);
+		ret |= cfgfile_string(option, value, "shader", amiberry_options.shader, sizeof amiberry_options.shader);
 	}
 	return ret;
 }

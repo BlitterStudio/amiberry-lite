@@ -839,7 +839,7 @@ static void setupcursor()
 
 	setupcursor_needed = 1;
 	if (cursordata && cursorwidth && cursorheight) {
-		p96_cursor_surface = SDL_CreateRGBSurfaceWithFormat(0, cursorwidth, cursorheight, 32, SDL_PIXELFORMAT_BGRA32);
+		p96_cursor_surface = SDL_CreateRGBSurfaceWithFormat(0, cursorwidth, cursorheight, 32, SDL_PIXELFORMAT_RGBA32);
 
 		for (int y = 0; y < cursorheight; y++) {
 			uae_u8 *p1 = cursordata + cursorwidth * y;
@@ -1368,12 +1368,19 @@ static void picasso_handle_vsync2(struct AmigaMonitor *mon)
 	p96_framecnt++;
 
 	if (!uaegfx && !ad->picasso_on) {
-		rtg_render();
+		//gfxboard_vsync_handler(false, true);
 		return;
 	}
 
-	if (!ad->picasso_on)
+	if (uaegfx) {
+		if (thisisvsync) {
+			picasso_trigger_vblank();
+		}
+	}
+
+	if (!ad->picasso_on) {
 		return;
+	}
 
 	if (uaegfx && uaegfx_active) {
 		if (setupcursor_needed) {
@@ -1383,15 +1390,15 @@ static void picasso_handle_vsync2(struct AmigaMonitor *mon)
 	}
 
 	if (thisisvsync) {
-		rtg_render();
+		if (uaegfx) {
+			rtg_render();
+		}
+		else {
+			//gfxboard_vsync_handler(false, true);
+		}
 #ifdef AVIOUTPUT
 		frame_drawn(monid);
 #endif
-	}
-
-	if (uaegfx) {
-		if (thisisvsync)
-			picasso_trigger_vblank();
 	}
 
 #if 0
@@ -1408,22 +1415,14 @@ void picasso_handle_vsync()
 {
 	struct AmigaMonitor *mon = &AMonitors[currprefs.rtgboards[0].monitor_id];
 	const struct amigadisplay *ad = &adisplays[currprefs.rtgboards[0].monitor_id];
-	const bool uaegfx = currprefs.rtgboards[0].rtgmem_type < GFXBOARD_HARDWARE;
 	const bool uaegfx_active = is_uaegfx_active();
 
-	if (currprefs.rtgboards[0].rtgmem_size == 0)
-		return;
-
-	if (!ad->picasso_on && uaegfx) {
-		if (uaegfx_active) {
+	if (uaegfx_active) {
+		if (!ad->picasso_on) {
 			createwindowscursor(mon->monitor_id, 0, 1);
 		}
-		picasso_trigger_vblank();
-		if (!delayed_set_switch)
-			return;
 	}
-
-	const int vsync = isvsync_rtg();
+	int vsync = isvsync_rtg();
 	if (vsync < 0) {
 		p96hsync = 0;
 		picasso_handle_vsync2(mon);
@@ -1966,6 +1965,13 @@ static void updatesprcolors (int bpp)
 				v |= 0xff000000;
 			else
 				v &= 0x00ffffff;
+			
+			// If we are using UAE RTG, we use RGBA surface, so we need to swap R and B
+			// (Since v comes in 0x..RRGGBB -> LE BBGGRR.. which matches BGRA surface order)
+			if (currprefs.rtgboards[0].rtgmem_type < GFXBOARD_HARDWARE) {
+				v = (v & 0xFF00FF00) | ((v & 0x00FF0000) >> 16) | ((v & 0x000000FF) << 16);
+			}
+
 			cursorrgbn[i] = v;
 			break;
 		default: // 1
@@ -2102,7 +2108,7 @@ static int createwindowscursor(int monid, int set, int chipset)
 
 	tmp_sprite_w = tmp_sprite_h = 0;
 
-	cursor_surface = SDL_CreateRGBSurface(0, w, h, 32, 0, 0, 0, 0);
+	cursor_surface = SDL_CreateRGBSurfaceWithFormat(0, w, h, 32, SDL_PIXELFORMAT_BGRA32);
 	if (!cursor_surface)
 		goto end;
 
@@ -2662,11 +2668,16 @@ static const struct modeids mi[] =
 	5120,1440, 180,
 	5120,2160, 181,
 	1280, 600, 182,
+	3840,1080, 184,
+	2560,1080, 184,
+	4096,2160, 185,
+	5120,2880, 186,
+	1176, 664, 187,
+	1440,1080, 188,
+	1600,1000, 189,
+	1600,1024, 190,
 #ifdef AMIBERRY
 	1024, 600, 183,
-	3840,1080, 184,
-#else
-	3840,1080, 183,
 #endif
 	-1,-1,0
 };
@@ -6982,6 +6993,7 @@ static void picasso_reset2(int monid)
 		struct amigadisplay *ad = &adisplay;
 		ad->picasso_requested_on = false;
 	}
+	//gfxboard_reset_init();
 
 	unlockrtg();
 }
@@ -7006,6 +7018,10 @@ static void picasso_free()
 		render_pipe = nullptr;
 		uae_sem_destroy(&render_cs);
 		render_cs = nullptr;
+		if (render_tid) {
+			uae_wait_thread(&render_tid);
+			render_tid = nullptr;
+		}
 #endif
 		render_thread_state = 0;
 	}

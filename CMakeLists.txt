@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 project(amiberry-lite
-    VERSION 5.9.1
+    VERSION 5.9.2
     LANGUAGES C CXX ASM
     DESCRIPTION "Optimized Amiga emulator for various platforms"
     HOMEPAGE_URL "https://amiberry.com"
@@ -43,8 +43,8 @@ endif()
 # Versioning
 set(VERSION_MAJOR "5" CACHE STRING "Major version")
 set(VERSION_MINOR "9" CACHE STRING "Minor version")
-set(VERSION_PATCH "1" CACHE STRING "Patch version")
-set(VERSION_PRE_RELEASE "" CACHE STRING "Pre-release version")
+set(VERSION_PATCH "2" CACHE STRING "Patch version")
+set(VERSION_PRE_RELEASE "1" CACHE STRING "Pre-release version")
 set(VERSION "${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_PATCH}")
 
 # Use PkgConfig only on FreeBSD

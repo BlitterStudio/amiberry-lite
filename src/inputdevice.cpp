@@ -2616,7 +2616,7 @@ static bool get_mouse_position(int *xp, int *yp, int inx, int iny)
 
 	getgfxoffset(monid, &fdx, &fdy, &fmx, &fmy);
 
-	//write_log("%.2f*%.2f %.2f*%.2f\n", fdx, fdy, fmx, fmy);
+	//write_log("%d %d, %.2f*%.2f %.2f*%.2f\n", x, y, fdx, fdy, fmx, fmy);
 
 #ifdef PICASSO96
 	if (ad->picasso_on) {
@@ -2636,14 +2636,27 @@ static bool get_mouse_position(int *xp, int *yp, int inx, int iny)
 		}
 		x = (int)(x * fmx);
 		y = (int)(y * fmy);
-		x -= (int)(fdx * fmx) - 1;
-		y -= (int)(fdy * fmy) - 2;
+		x -= (int)(fdx * 1.0) - 0;
+		y -= (int)(fdy * 1.0) - 2;
+		if (x < 0) {
+			ob = true;
+			x = 0;
+		}
+		if (x * fmx >= vidinfo->outbuffer->outwidth) {
+			ob = true;
+			x = vidinfo->outbuffer->outwidth - 1;
+		}
+		if (y < 0) {
+			ob = true;
+			y = 0;
+		}
+		if (y * fmy >= vidinfo->outbuffer->outheight) {
+			ob = true;
+			y = vidinfo->outbuffer->outheight - 1;
+		}
 		x = coord_native_to_amiga_x(x);
 		if (y >= 0) {
 			y = coord_native_to_amiga_y(y) * 2;
-		}
-		if (x < 0 || y < 0 || x >= vidinfo->outbuffer->outwidth || y >= vidinfo->outbuffer->outheight) {
-			ob = true;
 		}
 	}
 	*xp = x;
@@ -3303,8 +3316,6 @@ end:
 		if (!ad->picasso_on) {
 			int aw = 0, ah = 0, dx, dy;
 			get_custom_mouse_limits(&aw, &ah, &dx, &dy, dimensioninfo_dbl);
-			x += dx;
-			y += dy;
 			float dx2, dy2, mx2, my2;
 			getgfxoffset(monid, &dx2, &dy2, &mx2, &my2);
 			if (mx2) {
@@ -3313,6 +3324,8 @@ end:
 			if (my2) {
 				y = (int)(y / my2);
 			}
+			x += dx;
+			y += dy;
 			x += (int)dx2;
 			y += (int)dy2;
 		} else {
@@ -9239,6 +9252,7 @@ void inputdevice_copyconfig (struct uae_prefs *src, struct uae_prefs *dst)
 	strcpy(dst->action_replay, src->action_replay);
 	strcpy(dst->fullscreen_toggle, src->fullscreen_toggle);
 	strcpy(dst->minimize, src->minimize);
+	strcpy(dst->left_amiga, src->left_amiga);
 	strcpy(dst->right_amiga, src->right_amiga);
 	dst->use_retroarch_quit = src->use_retroarch_quit;
 	dst->use_retroarch_menu = src->use_retroarch_menu;

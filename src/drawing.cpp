@@ -4360,10 +4360,14 @@ bool vsync_handle_check (void)
 #ifdef AMIBERRY
 void quit_drawing_thread()
 {
-	while (drawing_thread_busy)
-		sleep_micros(1);
-	if (drawing_pipe)
-		write_comm_pipe_u32(drawing_pipe, RENDER_SIGNAL_QUIT, 1);
+	if (drawing_tid) {
+		while (drawing_thread_busy)
+			sleep_micros(1);
+		if (drawing_pipe)
+			write_comm_pipe_u32(drawing_pipe, RENDER_SIGNAL_QUIT, 1);
+		uae_wait_thread(&drawing_tid);
+		drawing_tid = nullptr;
+	}
 }
 #endif
 
@@ -4371,6 +4375,9 @@ void vsync_handle_redraw(int long_field, int lof_changed, uae_u16 bplcon0p, uae_
 {
 	int monid = 0;
 	struct amigadisplay *ad = &adisplays[monid];
+
+	check_prefs_picasso();
+
 	last_redraw_point++;
 	if (lof_changed || interlace_seen <= 0 || (currprefs.gfx_iscanlines && interlace_seen > 0) || last_redraw_point >= 2 || long_field || doublescan < 0) {
 		last_redraw_point = 0;
@@ -4684,7 +4691,6 @@ static int drawing_thread(void *unused)
 			break;
 
 			case RENDER_SIGNAL_QUIT:
-				drawing_tid = nullptr;
 				if (drawing_pipe)
 				{
 					destroy_comm_pipe(drawing_pipe);

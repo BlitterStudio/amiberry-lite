@@ -55,11 +55,11 @@ jobs:
         run: zip -r "amiberry-lite-${{ github.ref_name }}-${{ matrix.release_name }}.zip" amiberry-lite_*.deb
 
       - name: Upload artifact for release
-        if: github.ref_type == 'tag'
+        if: always() && github.ref_type == 'tag'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: amiberry-lite-*.zip
+          path: "amiberry-lite-*.zip"
 
   build-debian-arm64:
     runs-on: ubuntu-latest
@@ -82,32 +82,32 @@ jobs:
             artifact_name: amiberry-lite-debian-trixie-arm64
             release_name: debian-trixie-arm64
     steps:
-      - uses: actions/checkout@v4
+    - uses: actions/checkout@v4
 
-      - name: Run the build process with Docker
-        uses: addnab/docker-run-action@v3
-        with:
-          image: ${{ matrix.image }}
-          options: -v ${{ github.workspace }}:/build
-          run: |
-            cmake -DCMAKE_TOOLCHAIN_FILE=cmake/Toolchain-aarch64-linux-gnu.cmake -B build -G Ninja -DCMAKE_INSTALL_PREFIX=/usr && cmake --build build -j4
-            cpack -G DEB --config build/CPackConfig.cmake
+    - name: Run the build process with Docker
+      uses: addnab/docker-run-action@v3
+      with:
+        image: ${{ matrix.image }}
+        options: -v ${{ github.workspace }}:/build
+        run: |
+          cmake -DCMAKE_TOOLCHAIN_FILE=cmake/Toolchain-aarch64-linux-gnu.cmake -B build -G Ninja -DCMAKE_INSTALL_PREFIX=/usr && cmake --build build -j4
+          cpack -G DEB --config build/CPackConfig.cmake
 
-      - name: Upload artifact
-        if: github.ref_type != 'tag'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact_name }}
-          path: "amiberry-lite_*.deb"
+    - name: Upload artifact
+      if: always() && github.ref_type != 'tag'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.artifact_name }}
+        path: "amiberry-lite_*.deb"
 
-      - name: ZIP package for release
-        if: github.ref_type == 'tag'
-        run: zip -r amiberry-lite-${{ github.ref_name }}-${{ matrix.release_name }}.zip amiberry-lite_*.deb
+    - name: ZIP package for release
+      if: github.ref_type == 'tag'
+      run: zip -r amiberry-lite-${{ github.ref_name }}-${{ matrix.release_name }}.zip amiberry-lite_*.deb
 
-      - name: Upload artifact for release
-        if: always() && github.ref_type == 'tag'
-        uses: actions/upload-artifact@v4
-        with:
+    - name: Upload artifact for release
+      if: always() && github.ref_type == 'tag'
+      uses: actions/upload-artifact@v4
+      with:
           name: ${{ matrix.artifact_name }}
           path: "amiberry-lite-*.zip"
 
@@ -132,32 +132,32 @@ jobs:
             artifact_name: amiberry-lite-debian-trixie-armhf
             release_name: debian-trixie-armhf
     steps:
-      - uses: actions/checkout@v4
+    - uses: actions/checkout@v4
 
-      - name: Run the build process with Docker
-        uses: addnab/docker-run-action@v3
-        with:
-          image: ${{ matrix.image }}
-          options: -v ${{ github.workspace }}:/build
-          run: |
-            cmake -DCMAKE_TOOLCHAIN_FILE=cmake/Toolchain-arm-linux-gnueabihf.cmake -B build -G Ninja -DCMAKE_INSTALL_PREFIX=/usr && cmake --build build -j4
-            cpack -G DEB --config build/CPackConfig.cmake
+    - name: Run the build process with Docker
+      uses: addnab/docker-run-action@v3
+      with:
+        image: ${{ matrix.image }}
+        options: -v ${{ github.workspace }}:/build
+        run: |
+          cmake -DCMAKE_TOOLCHAIN_FILE=cmake/Toolchain-arm-linux-gnueabihf.cmake -B build -G Ninja -DCMAKE_INSTALL_PREFIX=/usr && cmake --build build -j4
+          cpack -G DEB --config build/CPackConfig.cmake
 
-      - name: Upload artifact
-        if: always() && github.ref_type != 'tag'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact_name }}
-          path: "amiberry-lite_*.deb"
+    - name: Upload artifact
+      if: always() && github.ref_type != 'tag'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.artifact_name }}
+        path: "amiberry-lite_*.deb"
 
-      - name: ZIP package for release
-        if: github.ref_type == 'tag'
-        run: zip -r amiberry-lite-${{ github.ref_name }}-${{ matrix.release_name }}.zip amiberry-lite_*.deb
+    - name: ZIP package for release
+      if: github.ref_type == 'tag'
+      run: zip -r amiberry-lite-${{ github.ref_name }}-${{ matrix.release_name }}.zip amiberry-lite_*.deb
 
-      - name: Upload artifact for release
-        if: github.ref_type == 'tag'
-        uses: actions/upload-artifact@v4
-        with:
+    - name: Upload artifact for release
+      if: always() && github.ref_type == 'tag'
+      uses: actions/upload-artifact@v4
+      with:
           name: ${{ matrix.artifact_name }}
           path: "amiberry-lite-*.zip"
 

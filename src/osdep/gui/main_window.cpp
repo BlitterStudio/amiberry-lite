@@ -22,6 +22,7 @@
 #include "fsdb_host.h"
 #include "autoconf.h"
 #include "amiberry_input.h"
+#include "disk.h"
 #include "fsdb.h"
 #include "inputdevice.h"
 #include "xwin.h"
@@ -317,8 +318,8 @@ void amiberry_gui_init()
         if (amiberry_options.rotation_angle == 0 || amiberry_options.rotation_angle == 180)
         {
 			mon->gui_window = SDL_CreateWindow("Amiberry GUI",
-				gui_window_rect.x != 0 ? gui_window_rect.x : SDL_WINDOWPOS_CENTERED,
-				gui_window_rect.y != 0 ? gui_window_rect.y : SDL_WINDOWPOS_CENTERED,
+				SDL_WINDOWPOS_CENTERED,
+				SDL_WINDOWPOS_CENTERED,
 				gui_window_rect.w,
 				gui_window_rect.h,
 				mode);
@@ -326,8 +327,8 @@ void amiberry_gui_init()
         else
         {
 			mon->gui_window = SDL_CreateWindow("Amiberry GUI",
-				gui_window_rect.y != 0 ? gui_window_rect.y : SDL_WINDOWPOS_CENTERED,
-				gui_window_rect.x != 0 ? gui_window_rect.x : SDL_WINDOWPOS_CENTERED,
+				SDL_WINDOWPOS_CENTERED,
+				SDL_WINDOWPOS_CENTERED,
 				gui_window_rect.h,
 				gui_window_rect.w,
 				mode);
@@ -418,6 +419,42 @@ void amiberry_gui_halt()
 		SDL_DestroyWindow(mon->gui_window);
 		mon->gui_window = nullptr;
 	}
+}
+
+std::string get_filename_extension(const TCHAR* filename);
+extern void uae_restart(struct uae_prefs* p, int opengui, const TCHAR* cfgfile);
+
+static void handle_drop_file_event(const SDL_Event& event)
+{
+	char* dropped_file = event.drop.file;
+	const auto ext = get_filename_extension(dropped_file);
+
+	if (strcasecmp(ext.c_str(), ".uae") == 0)
+	{
+		// Load configuration file
+		uae_restart(&currprefs, -1, dropped_file);
+		gui_running = false;
+	}
+	else if (strcasecmp(ext.c_str(), ".adf") == 0 || strcasecmp(ext.c_str(), ".adz") == 0 || strcasecmp(ext.c_str(), ".dms") == 0 || strcasecmp(ext.c_str(), ".ipf") == 0 || strcasecmp(ext.c_str(), ".zip") == 0)
+	{
+		// Insert floppy image
+		disk_insert(0, dropped_file);
+	}
+	else if (strcasecmp(ext.c_str(), ".lha") == 0)
+	{
+		// WHDLoad archive
+		whdload_auto_prefs(&currprefs, dropped_file);
+		uae_restart(&currprefs, -1, nullptr);
+		gui_running = false;
+	}
+	else if (strcasecmp(ext.c_str(), ".cue") == 0 || strcasecmp(ext.c_str(), ".iso") == 0 || strcasecmp(ext.c_str(), ".chd") == 0)
+	{
+		// CD image
+		cd_auto_prefs(&currprefs, dropped_file);
+		uae_restart(&currprefs, -1, nullptr);
+		gui_running = false;
+	}
+	SDL_free(dropped_file);
 }
 
 void check_input()
@@ -807,6 +844,10 @@ void check_input()
 			default:
 				break;
 			}
+			break;
+
+		case SDL_DROPFILE:
+			handle_drop_file_event(gui_event);
 			break;
 
 		default:

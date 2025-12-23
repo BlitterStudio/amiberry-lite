@@ -17,17 +17,14 @@
 
 #include "sysdeps.h"
 #include "options.h"
-#include "audio.h"
 #include "uae.h"
-#include "memory.h"
 #include "custom.h"
 #include "events.h"
-#include "newcpu.h"
-#include "traps.h"
 #include "xwin.h"
 #include "keyboard.h"
 #include "drawing.h"
 #include "picasso96.h"
+#include "gui.h"
 #include "amiberry_gfx.h"
 #include "sounddep/sound.h"
 #include "inputdevice.h"
@@ -67,6 +64,7 @@
 #endif
 
 #include "dpi_handler.hpp"
+#include "registry.h"
 
 #ifdef AMIBERRY
 static bool force_auto_crop = false;
@@ -75,9 +73,20 @@ SDL_Surface* amiga_surface = nullptr;
 
 #ifdef USE_OPENGL
 SDL_GLContext gl_context;
-//crtemu_t* crtemu_lite = nullptr;
-//crtemu_t* crtemu_pc = nullptr;
 crtemu_t* crtemu_tv = nullptr;
+
+bool set_opengl_attributes();
+bool init_opengl_context(SDL_Window* window);
+static uae_u8* create_packed_pixel_buffer(const SDL_Surface* src, const SDL_Rect& crop, SDL_Rect& out_buffer_rect);
+static int get_crtemu_type(const char* shader)
+{
+	if (!shader) return CRTEMU_TYPE_TV;
+	// Simple case handling without extra deps
+	if (!std::strcmp(shader, "tv") || !std::strcmp(shader, "TV"))       return CRTEMU_TYPE_TV;
+	if (!std::strcmp(shader, "pc") || !std::strcmp(shader, "PC"))       return CRTEMU_TYPE_PC;
+	if (!std::strcmp(shader, "lite") || !std::strcmp(shader, "LITE"))   return CRTEMU_TYPE_LITE;
+	return CRTEMU_TYPE_TV;
+}
 #else
 SDL_Texture* amiga_texture;
 #endif
@@ -94,6 +103,12 @@ static int display_depth;
 Uint32 pixel_format;
 
 static frame_time_t last_synctime;
+
+static volatile int waitvblankthread_mode;
+static frame_time_t wait_vblank_timestamp;
+static struct MultiDisplay* wait_vblank_display;
+static volatile bool vsync_active;
+static bool scanlinecalibrating;
 
 static SDL_Surface* current_screenshot = nullptr;
 std::string screenshot_filename;
@@ -114,9 +129,6 @@ float vsync_vblank, vsync_hblank;
 bool beamracer_debug;
 bool gfx_hdr;
 
-static SDL_mutex* screen_cs = nullptr;
-static bool screen_cs_allocated;
-
 /* If we have to lock the SDL surface, then we remember the address
  * of its pixel data - and recalculate the row maps only when this
  * address changes */
@@ -124,11 +136,9 @@ static void* old_pixels;
 
 void gfx_lock()
 {
-	SDL_LockMutex(screen_cs);
 }
 void gfx_unlock()
 {
-	SDL_UnlockMutex(screen_cs);
 }
 
 #ifdef AMIBERRY
@@ -154,7 +164,7 @@ void GetWindowRect(SDL_Window* window, SDL_Rect* rect)
 
 // Check if the requested Amiga resolution can be displayed with the current Screen mode as a direct multiple
 // Based on this we make the decision to use Linear (smooth) or Nearest Neighbor (pixelated) scaling
-bool ar_is_exact(const SDL_DisplayMode* mode, const int width, const int height)
+static bool ar_is_exact(const SDL_DisplayMode* mode, const int width, const int height)
 {
 	return mode->w % width == 0 && mode->h % height == 0;
 }
@@ -356,15 +366,13 @@ static bool SDL2_alloctexture(int monid, int w, int h, const int depth)
 	if (w == 0 || h == 0)
 		return false;
 #ifdef USE_OPENGL
-	struct AmigaMonitor* mon = &AMonitors[monid];
-
-	//crt_frame( (CRTEMU_U32*)amiga_surface->pixels ); // bezel - however, seems hardcoded to internal 1024x1024 size
-
-	//TODO Check for option (which CRT filter to use: Lite/PC/TV)
+	write_log("DEBUG: SDL2_alloctexture called with w=%d, h=%d\n", w, h);
 	if (crtemu_tv)
 		destroy_crtemu();
-	if (crtemu_tv == nullptr)
-		crtemu_tv = crtemu_create(CRTEMU_TYPE_TV, nullptr);
+	if (crtemu_tv == nullptr) {
+		const int crt_type = get_crtemu_type(amiberry_options.shader);
+		crtemu_tv = crtemu_create(static_cast<crtemu_type_t>(crt_type), nullptr);
+	}
 	if (crtemu_tv)
 		crtemu_frame(crtemu_tv, (CRTEMU_U32*)amiga_surface->pixels, w, h);
 	return crtemu_tv != nullptr;
@@ -396,24 +404,40 @@ static bool SDL2_alloctexture(int monid, int w, int h, const int depth)
 
 static void update_leds(const int monid)
 {
+	if (!amiga_surface)
+		return;
+
+	// Use static variables to avoid recalculating color tables every frame
 	static uae_u32 rc[256], gc[256], bc[256], a[256];
-	static int done;
+	static bool color_tables_initialized = false;
 	int osdx, osdy;
 
-	if (!done) {
+	// Only initialize color tables once for better performance
+	if (!color_tables_initialized) {
 		for (int i = 0; i < 256; i++) {
+#ifdef AMIBERRY
+			// RGBA
 			rc[i] = i << 0;
 			gc[i] = i << 8;
 			bc[i] = i << 16;
+#else
+			// BGRA
+			rc[i] = i << 16;
+			gc[i] = i << 8;
+			bc[i] = i << 0;
+#endif
 			a[i] = i << 24;
 		}
-		done = 1;
+		color_tables_initialized = true;
 	}
 
-	statusline_getpos(monid, &osdx, &osdy, crop_rect.w + crop_rect.x, crop_rect.h + crop_rect.y);
-	int m = statusline_get_multiplier(monid) / 100;
-	for (int y = 0; y < TD_TOTAL_HEIGHT * m; y++) {
-		uae_u8* buf = (uae_u8*)amiga_surface->pixels + (y + osdy) * amiga_surface->pitch;
+	statusline_getpos(monid, &osdx, &osdy, crop_rect.w, crop_rect.h);
+	const int m = statusline_get_multiplier(monid) / 100;
+	const int led_height = TD_TOTAL_HEIGHT * m;
+
+	// Optimize the LED drawing loop
+	for (int y = 0; y < led_height; y++) {
+		uae_u8* buf = static_cast<uae_u8*>(amiga_surface->pixels) + (y + osdy) * amiga_surface->pitch;
 		draw_status_line_single(monid, buf, 32 / 8, y, crop_rect.w + crop_rect.x, rc, gc, bc, a);
 	}
 }
@@ -433,7 +457,9 @@ static bool SDL2_renderframe(const int monid, int mode, int immediate)
 	{
 		update_leds(monid);
 	}
-
+#ifdef USE_OPENGL
+	return amiga_surface != nullptr;
+#else
 	if (amiga_texture && amiga_surface)
 	{
 		SDL_RenderClear(mon->amiga_renderer);
@@ -460,13 +486,99 @@ static bool SDL2_renderframe(const int monid, int mode, int immediate)
 		}
 		return true;
 	}
+#endif
+
 	return false;
 }
+
+extern frame_time_t syncbase;
+extern float vblank_hz;
+extern frame_time_t vsynctimebase;
 
 static void SDL2_showframe(const int monid)
 {
 	const AmigaMonitor* mon = &AMonitors[monid];
+	Uint64 start_render_tick = SDL_GetPerformanceCounter();
 	SDL_RenderPresent(mon->amiga_renderer);
+	Uint64 end_render_tick = SDL_GetPerformanceCounter();
+	
+	static Uint64 freq = 0;
+	if (freq == 0) freq = SDL_GetPerformanceFrequency();
+
+	if (syncbase > 0)
+	{
+		double target_fps;
+		if (vblank_hz > 45 && vblank_hz < 65) target_fps = (double)vblank_hz;
+		else if (currprefs.ntscmode) target_fps = 60.0;
+		else target_fps = 50.0;
+		
+		static double accumulated_error = 0.0; 
+		double target_frame_dist_sec = 1.0 / target_fps;
+
+		// Custom Adaptive Sync using SDL Counters (PI Controller)
+		if (gui_data.sndbuf_avail) {
+			int buffer_error = gui_data.sndbuf - 750; // Target 75% (1.5 fragments) for stability
+			
+			// Integral term (accumulate error to find natural clock skew)
+			accumulated_error += buffer_error;
+			
+			// Anti-windup: Clamp accumulated error
+			if (accumulated_error > 80000.0) accumulated_error = 80000.0;
+			if (accumulated_error < -80000.0) accumulated_error = -80000.0;
+
+			// PI Gains
+			// Kp: Immediate reaction to spikes. 0.00005.
+			// Ki: Slow adaptation. 0.0000005.
+			double P = (double)buffer_error * 0.00005; 
+			double I = accumulated_error * 0.0000005;
+			
+			double adjustment_factor = 1.0 + P + I; 
+			
+			// Safety Clamp +/- 8%
+			if (adjustment_factor > 1.08) adjustment_factor = 1.08;
+			if (adjustment_factor < 0.92) adjustment_factor = 0.92;
+
+			target_frame_dist_sec *= adjustment_factor;
+		}
+		
+		Uint64 target_ticks = (Uint64)(target_frame_dist_sec * freq);
+		
+		static Uint64 next_frame_tick = 0;
+		Uint64 current_tick = SDL_GetPerformanceCounter();
+
+		if (next_frame_tick == 0)
+		{
+			next_frame_tick = current_tick + target_ticks;
+		}
+		else
+		{
+			next_frame_tick += target_ticks;
+			// Lag reset: if we are more than 100ms behind, reset
+			if (current_tick > next_frame_tick + (freq / 10)) {
+				next_frame_tick = current_tick + target_ticks;
+			}
+		}
+		
+		Sint64 ticks_left = next_frame_tick - current_tick;
+		
+		// Sleep wait (2ms threshold)
+		while (ticks_left > (Sint64)(freq / 500)) // > 2ms
+		{
+			struct timespec req = { 0, 500000 };
+			nanosleep(&req, nullptr);
+			current_tick = SDL_GetPerformanceCounter();
+			ticks_left = next_frame_tick - current_tick;
+		}
+
+		// Spin wait
+		while (SDL_GetPerformanceCounter() < next_frame_tick)
+		{
+			// busy wait
+		}
+	}
+	
+	// Sync legacy variable for other systems
+	wait_vblank_timestamp = read_processor_time();
 }
 
 void flush_screen(struct vidbuffer* vb, int y_start, int y_end)
@@ -497,13 +609,6 @@ static int isfullscreen_2(const struct uae_prefs* p)
 int isfullscreen()
 {
 	return isfullscreen_2(&currprefs);
-}
-
-int gfx_GetDepth(const struct AmigaMonitor* mon, const int real)
-{
-	if (!mon->currentmode.native_depth)
-		return mon->currentmode.current_depth;
-	return real ? mon->currentmode.native_depth : mon->currentmode.current_depth;
 }
 
 int gfx_GetWidth(const struct AmigaMonitor* mon)
@@ -567,11 +672,6 @@ int target_get_display(const TCHAR* name)
 	return 0;
 }
 
-static volatile int waitvblankthread_mode;
-static frame_time_t wait_vblank_timestamp;
-static MultiDisplay* wait_vblank_display;
-static volatile bool vsync_active;
-static bool scanlinecalibrating;
 
 static int target_get_display_scanline2(int displayindex)
 {
@@ -666,8 +766,8 @@ static bool get_display_vblank_params(int displayindex, int* activeheightp, int*
 		*activeheightp = usable_bounds.h;
 	if (totalheightp)
 		*totalheightp = bounds.h;
-	const float vblank = static_cast<float>(dm.refresh_rate);
-	const float hblank = static_cast<float>(31000); // faking hblank, since SDL2 doesn't provide a way to get the real one
+	const auto vblank = static_cast<float>(dm.refresh_rate);
+	const auto hblank = static_cast<float>(31000); // faking hblank, since SDL2 doesn't provide a way to get the real one
 	if (vblankp)
 		*vblankp = vblank;
 	if (hblankp)
@@ -692,9 +792,8 @@ static void display_vblank_thread(struct AmigaMonitor* mon)
 	//	unsigned int th;
 	//	_beginthreadex(NULL, 0, waitvblankthread, 0, 0, &th);
 	//}
-	//else {
-		calculated_scanline = false;
-	//}
+	// it is used when D3DKMTGetScanLine() is not available or not working.
+	// calculated_scanline = false;
 }
 
 void target_cpu_speed()
@@ -702,11 +801,44 @@ void target_cpu_speed()
 	display_vblank_thread(&AMonitors[0]);
 }
 
+extern void target_calibrate_spin();
+static void display_param_init(struct AmigaMonitor* mon)
+{
+	const struct amigadisplay* ad = &adisplays[mon->monitor_id];
+	struct apmode* ap = ad->picasso_on ? &currprefs.gfx_apmode[APMODE_RTG] : &currprefs.gfx_apmode[APMODE_NATIVE];
+
+	vsync_activeheight = mon->currentmode.current_height;
+	vsync_totalheight = vsync_activeheight * 1125 / 1080;
+	vsync_vblank = 0;
+	vsync_hblank = 0;
+	get_display_vblank_params(0, &vsync_activeheight, &vsync_totalheight, &vsync_vblank, &vsync_hblank);
+	if (vsync_vblank <= 0)
+		vsync_vblank = static_cast<float>(mon->currentmode.freq);
+	// GPU scaled mode?
+	if (vsync_activeheight > mon->currentmode.current_height) {
+		const float m = static_cast<float>(vsync_activeheight) / mon->currentmode.current_height;
+		vsync_hblank = vsync_hblank / m + 0.5f;
+		vsync_activeheight = mon->currentmode.current_height;
+	}
+
+	wait_vblank_display = getdisplay(&currprefs, mon->monitor_id);
+	if (wait_vblank_display) {
+		wait_vblank_display->HasAdapterData = true; // SDL2 displays always have adapter data
+	}
+	if (!wait_vblank_display || !wait_vblank_display->HasAdapterData) {
+		write_log(_T("Selected display mode does not have adapter data!\n"));
+	}
+	scanlinecalibrating = true;
+	target_calibrate_spin();
+	scanlinecalibrating = false;
+	display_vblank_thread(mon);
+}
+
 const TCHAR* target_get_display_name(const int num, const bool friendlyname)
 {
 	if (num <= 0)
 		return nullptr;
-	const struct MultiDisplay* md = getdisplay2(nullptr, num - 1);
+	const struct MultiDisplay* md = getdisplay2(nullptr, 0);
 	if (!md)
 		return nullptr;
 	if (friendlyname)
@@ -714,14 +846,50 @@ const TCHAR* target_get_display_name(const int num, const bool friendlyname)
 	return md->monitorid;
 }
 
-void getgfxoffset(int monid, float* dxp, float* dyp, float* mxp, float* myp)
+void centerdstrect(struct AmigaMonitor* mon, SDL_Rect* dr)
 {
-	float dx = 0, dy = 0, mx = 1.0, my = 1.0;
+	if (!(mon->currentmode.flags & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP)))
+		OffsetRect(dr, mon->amigawin_rect.x, mon->amigawin_rect.y);
+	if (mon->currentmode.flags & SDL_WINDOW_FULLSCREEN_DESKTOP) {
+		if (mon->scalepicasso && mon->screen_is_picasso)
+			return;
+		if (mon->currentmode.fullfill && (mon->currentmode.current_width > mon->currentmode.native_width || mon->currentmode.current_height > mon->currentmode.native_height))
+			return;
+		OffsetRect(dr, (mon->currentmode.native_width - mon->currentmode.current_width) / 2,
+			(mon->currentmode.native_height - mon->currentmode.current_height) / 2);
+	}
+}
 
+//static int picasso_offset_x, picasso_offset_y;
+//static float picasso_offset_mx, picasso_offset_my;
+
+void getgfxoffset(const int monid, float* dxp, float* dyp, float* mxp, float* myp)
+{
+	struct AmigaMonitor* mon = &AMonitors[monid];
+	const struct amigadisplay* ad = &adisplays[monid];
+	float dx = 0, dy = 0, mx = 1.0, my = 1.0;
+#ifdef AMIBERRY
 	if (currprefs.gfx_auto_crop)
 	{
 		dx -= static_cast<float>(crop_rect.x);
 		dy -= static_cast<float>(crop_rect.y);
+	}
+#endif
+	//if (ad->picasso_on) {
+	//	dx = picasso_offset_x * picasso_offset_mx;
+	//	dy = picasso_offset_y * picasso_offset_my;
+	//	mx = picasso_offset_mx;
+	//	my = picasso_offset_my;
+	//}
+
+	if (mon->currentmode.flags & SDL_WINDOW_FULLSCREEN_DESKTOP) {
+		while (!(mon->scalepicasso && mon->screen_is_picasso)) {
+			if (mon->currentmode.fullfill && (mon->currentmode.current_width > mon->currentmode.native_width || mon->currentmode.current_height > mon->currentmode.native_height))
+				break;
+			dx += (mon->currentmode.native_width - mon->currentmode.current_width) / 2;
+			dy += (mon->currentmode.native_height - mon->currentmode.current_height) / 2;
+			break;
+		}
 	}
 
 	*dxp = dx;
@@ -744,6 +912,13 @@ static void addmode(const struct MultiDisplay* md, SDL_DisplayMode* dm, const in
 		write_log(_T("Ignored mode %d*%d\n"), w, h);
 		return;
 	}
+
+	// SDL2 reports 24-bit here, but we can ignore it and use 32-bit modes
+#ifndef AMIBERRY
+	if (d != 32) {
+		return;
+	}
+#endif
 
 	if (dm->refresh_rate) {
 		freq = dm->refresh_rate;
@@ -1084,9 +1259,7 @@ bool render_screen(const int monid, const int mode, const bool immediate)
 			return mon->render_ok;
 		}
 	}
-	//gfx_lock();
 	mon->render_ok = SDL2_renderframe(monid, mode, immediate);
-	//gfx_unlock();
 	return mon->render_ok;
 }
 
@@ -1147,28 +1320,55 @@ void show_screen(const int monid, int mode)
 	}
 #ifdef USE_OPENGL
 	auto time = SDL_GetTicks();
-	glViewport(0, 0, renderQuad.w, renderQuad.h);
-	if (crtemu_tv) {
+
+	int drawableWidth, drawableHeight;
+	SDL_GL_GetDrawableSize(mon->amiga_window, &drawableWidth, &drawableHeight);
+	glViewport(0, 0, drawableWidth, drawableHeight);
+
+	// Check if any cropping is actually being applied.
+	// If crop_rect covers the entire surface, we can take a much faster path.
+	const bool is_cropped = (crop_rect.x != 0 || crop_rect.y != 0 ||
+	                         crop_rect.w != amiga_surface->w ||
+	                         crop_rect.h != amiga_surface->h);
+
+	if (is_cropped)
+	{
+		// SLOW PATH: Cropping is active.
+		// We must create a temporary packed buffer for the cropped region.
+		SDL_Rect corrected_crop_rect;
+		uae_u8* packed_pixel_buffer = create_packed_pixel_buffer(amiga_surface, crop_rect, corrected_crop_rect);
+
+		if (packed_pixel_buffer)
+		{
+			crtemu_present(crtemu_tv, time, reinterpret_cast<const CRTEMU_U32*>(packed_pixel_buffer),
+			corrected_crop_rect.w, corrected_crop_rect.h, 0xffffffff, 0x000000);
+
+			delete[] packed_pixel_buffer;
+		}
+	}
+	else
+	{
+		// FAST PATH: No cropping.
+		// Render the full surface directly without any expensive memory allocation or copying.
 		crtemu_present(crtemu_tv, time, (CRTEMU_U32 const*)amiga_surface->pixels,
-			crop_rect.w, crop_rect.h, 0xffffffff, 0x000000);
+		amiga_surface->w, amiga_surface->h, 0xffffffff, 0x000000);
 	}
 
 	SDL_GL_SwapWindow(mon->amiga_window);
 #else
 	SDL2_showframe(monid);
-#endif // USE_OPENGL
-	//gfx_unlock();
+#endif
 	mon->render_ok = false;
 }
 
 int lockscr(struct vidbuffer* vb, bool fullupdate, bool first, bool skip)
 {
 	const struct AmigaMonitor* mon = &AMonitors[vb->monitor_id];
+	int ret = 0;
 
-	if (!mon->amiga_window)
-		return 0;
+	if (!mon->amiga_window || !amiga_surface)
+		return ret;
 
-	//gfx_lock();
 	//
 	// Benchmarks have shown that Locking and Unlocking the Texture is slower than just calling UpdateTexture
 	// Therefore, this is disabled in Amiberry.
@@ -1183,7 +1383,6 @@ int lockscr(struct vidbuffer* vb, bool fullupdate, bool first, bool skip)
 		init_row_map();
 		old_pixels = amiga_surface->pixels;
 	}
-	//gfx_unlock();
 	return 1;
 }
 
@@ -1326,7 +1525,6 @@ static void update_gfxparams(struct AmigaMonitor* mon)
 
 	updatewinfsmode(mon->monitor_id, &currprefs);
 #ifdef PICASSO96
-	mon->currentmode.vsync = 0;
 	if (mon->screen_is_picasso) {
 		float mx = 1.0;
 		float my = 1.0;
@@ -1349,34 +1547,13 @@ static void update_gfxparams(struct AmigaMonitor* mon)
 		} else {
 			currprefs.gfx_apmode[APMODE_RTG].gfx_refreshrate = currprefs.rtgvblankrate;
 		}
-		if (currprefs.gfx_apmode[APMODE_RTG].gfx_vsync)
-			mon->currentmode.vsync = 1 + currprefs.gfx_apmode[APMODE_RTG].gfx_vsyncmode;
 	} else {
 #endif
 		mon->currentmode.current_width = currprefs.gfx_monitor[mon->monitor_id].gfx_size.width;
 		mon->currentmode.current_height = currprefs.gfx_monitor[mon->monitor_id].gfx_size.height;
-		if (currprefs.gfx_apmode[APMODE_NATIVE].gfx_vsync)
-			mon->currentmode.vsync = 1 + currprefs.gfx_apmode[APMODE_NATIVE].gfx_vsyncmode;
 #ifdef PICASSO96
 	}
 #endif
-#if FORCE16BIT
-	mon->currentmode.current_depth = 16;
-#else
-	mon->currentmode.current_depth = currprefs.color_mode < 5 && currprefs.gfx_api == 1 ? 16 : 32;
-#endif
-	if (mon->screen_is_picasso && canmatchdepth() && isfullscreen() > 0) {
-		int pbits = state->BytesPerPixel * 8;
-		if (pbits <= 8) {
-			if (mon->currentmode.current_depth == 32)
-				pbits = 32;
-			else
-				pbits = 16;
-		}
-		if (pbits == 24)
-			pbits = 32;
-		mon->currentmode.current_depth = pbits;
-	}
 	mon->currentmode.amiga_width = mon->currentmode.current_width;
 	mon->currentmode.amiga_height = mon->currentmode.current_height;
 
@@ -1397,19 +1574,17 @@ static void update_gfxparams(struct AmigaMonitor* mon)
 				mon->scalepicasso = -1;
 			}
 		} else if (isfullscreen() > 0) {
-			if (!canmatchdepth()) { // can't scale to different color depth
-				if (mon->currentmode.native_width > state->Width && mon->currentmode.native_height > state->Height) {
-					if (currprefs.gf[GF_RTG].gfx_filter_autoscale)
-						mon->scalepicasso = RTG_MODE_SCALE;
-					if (currprefs.gf[GF_RTG].gfx_filter_autoscale == RTG_MODE_INTEGER_SCALE) {
-						mon->scalepicasso = RTG_MODE_INTEGER_SCALE;
-					}
+			if (mon->currentmode.native_width > state->Width && mon->currentmode.native_height > state->Height) {
+				if (currprefs.gf[GF_RTG].gfx_filter_autoscale)
+					mon->scalepicasso = RTG_MODE_SCALE;
+				if (currprefs.gf[GF_RTG].gfx_filter_autoscale == RTG_MODE_INTEGER_SCALE) {
+					mon->scalepicasso = RTG_MODE_INTEGER_SCALE;
 				}
-				if (currprefs.gf[GF_RTG].gfx_filter_autoscale == RTG_MODE_CENTER)
-					mon->scalepicasso = currprefs.gf[GF_RTG].gfx_filter_autoscale;
-				if (!mon->scalepicasso && currprefs.rtgscaleaspectratio)
-					mon->scalepicasso = -1;
 			}
+			if (currprefs.gf[GF_RTG].gfx_filter_autoscale == RTG_MODE_CENTER)
+				mon->scalepicasso = currprefs.gf[GF_RTG].gfx_filter_autoscale;
+			if (!mon->scalepicasso && currprefs.rtgscaleaspectratio)
+				mon->scalepicasso = -1;
 		} else if (isfullscreen() == 0) {
 			if (currprefs.gf[GF_RTG].gfx_filter_autoscale == RTG_MODE_INTEGER_SCALE) {
 				mon->scalepicasso = RTG_MODE_INTEGER_SCALE;
@@ -1831,8 +2006,6 @@ int check_prefs_changed_gfx()
 #ifdef AMIBERRY
 					// Trigger auto-crop recalculations if needed
 					force_auto_crop = true;
-#else
-					S2X_reset(mon->monitor_id);
 #endif
 				}
 			}
@@ -2028,7 +2201,6 @@ int check_prefs_changed_gfx()
 		//closeprinter();
 #endif
 	}
-
 	if (_tcscmp(currprefs.sername, changed_prefs.sername) ||
 		currprefs.serial_hwctsrts != changed_prefs.serial_hwctsrts ||
 		currprefs.serial_direct != changed_prefs.serial_direct ||
@@ -2123,9 +2295,6 @@ void init_colors(const int monid)
 
 	alloc_colors64k(monid, red_bits, green_bits, blue_bits, red_shift, green_shift, blue_shift, alpha_bits, alpha_shift, alpha, 0, false);
 	notice_new_xcolors();
-#ifdef GFXFILTER
-	S2X_configure(monid, red_bits, green_bits, blue_bits, red_shift, green_shift, blue_shift);
-#endif
 #ifdef AVIOUTPUT
 	AVIOutput_RGBinfo(red_bits, green_bits, blue_bits, alpha_bits, red_shift, green_shift, blue_shift, alpha_shift);
 #endif
@@ -2415,7 +2584,7 @@ int vsync_isdone(frame_time_t* dt)
 
 #ifdef PICASSO96
 
-static int modeswitchneeded(const struct AmigaMonitor* mon, struct winuae_currentmode* wc)
+static int modeswitchneeded(const struct AmigaMonitor* mon, const struct winuae_currentmode* wc)
 {
 	struct vidbuf_description* avidinfo = &adisplays[mon->monitor_id].gfxvidinfo;
 	struct picasso96_state_struct* state = &picasso96_state[mon->monitor_id];
@@ -2495,11 +2664,10 @@ void gfx_set_picasso_modeinfo(const int monid, const RGBFTYPE rgbfmt)
 {
 	struct AmigaMonitor* mon = &AMonitors[monid];
 	struct picasso96_state_struct* state = &picasso96_state[mon->monitor_id];
-	int need;
 	if (!mon->screen_is_picasso)
 		return;
 	gfx_set_picasso_colors(monid, rgbfmt);
-	need = modeswitchneeded(mon, &mon->currentmode);
+	const int need = modeswitchneeded(mon, &mon->currentmode);
 	update_gfxparams(mon);
 	updatemodes(mon);
 
@@ -2520,22 +2688,6 @@ void gfx_set_picasso_colors(int monid, const RGBFTYPE rgbfmt)
 
 static void gfxmode_reset(int monid)
 {
-#ifdef GFXFILTER
-	struct amigadisplay* ad = &adisplays[monid];
-	struct uae_filter** usedfilter = &AMonitors[monid].usedfilter;
-
-	* usedfilter = NULL;
-	if (currprefs.gf[ad->gf_index].gfx_filter > 0) {
-		int i = 0;
-		while (uaefilters[i].name) {
-			if (uaefilters[i].type == currprefs.gf[ad->gf_index].gfx_filter) {
-				*usedfilter = &uaefilters[i];
-				break;
-			}
-			i++;
-		}
-	}
-#endif
 }
 #endif
 
@@ -2579,14 +2731,6 @@ int graphics_init(bool mousecapture)
 
 int graphics_setup()
 {
-	if (!screen_cs_allocated) {
-		screen_cs = SDL_CreateMutex();
-		if (screen_cs == nullptr) {
-			write_log(_T("Couldn't create screen_cs: %s\n"), SDL_GetError());
-			return 0;
-		}
-		screen_cs_allocated = true;
-	}
 #ifdef PICASSO96
 	InitPicasso96(0);
 #endif
@@ -2621,10 +2765,6 @@ void graphics_leave()
 			mon->gui_window = nullptr;
 		}
 	}
-
-	SDL_DestroyMutex(screen_cs);
-	screen_cs = nullptr;
-	screen_cs_allocated = false;
 }
 
 void close_windows(struct AmigaMonitor* mon)
@@ -2754,9 +2894,9 @@ bool target_graphics_buffer_update(const int monid, const bool force)
 			}
 		}
 #ifdef USE_OPENGL
-		renderQuad = { dx, dy, w, h };
+		render_quad = { dx, dy, w, h };
 		crop_rect = { dx, dy, w, h };
-		set_scaling_option(&currprefs, w, h);
+		set_scaling_option(mon->monitor_id, &currprefs, w, h);
 #else
 		if (mon->amiga_renderer) {
 			if (amiberry_options.rotation_angle == 0 || amiberry_options.rotation_angle == 180) {
@@ -2797,7 +2937,7 @@ bool target_graphics_buffer_update(const int monid, const bool force)
 
 		if (currprefs.ntscmode)
 			scaled_height = scaled_height * 6 / 5;
-		
+
 		if (mon->amiga_window && isfullscreen() == 0)
 		{
 			if (mon->amigawin_rect.w > 800 && mon->amigawin_rect.h != 600)
@@ -2811,15 +2951,15 @@ bool target_graphics_buffer_update(const int monid, const bool force)
 		}
 #ifdef USE_OPENGL
 		if (!currprefs.gfx_auto_crop && !currprefs.gfx_manual_crop) {
-			renderQuad = { dx, dy, scaled_width, scaled_height };
-			crop_rect = { dx, dy, scaled_width, scaled_height };
+			render_quad = { dx, dy, scaled_width, scaled_height };
+			crop_rect = { dx, dy, w, h };
 		}
 		else if (currprefs.gfx_manual_crop)
 		{
-			renderQuad = { dx, dy, scaled_width, scaled_height };
+			render_quad = { dx, dy, scaled_width, scaled_height };
 			crop_rect = { currprefs.gfx_horizontal_offset, currprefs.gfx_vertical_offset, currprefs.gfx_manual_crop_width, currprefs.gfx_manual_crop_height };
 		}
-		set_scaling_option(&currprefs, scaled_width, scaled_height);
+		set_scaling_option(mon->monitor_id, &currprefs, scaled_width, scaled_height);
 #else
 		if (mon->amiga_renderer)
 		{
@@ -3151,7 +3291,7 @@ void auto_crop_image()
 			height = sdl_mode.h;
 		}
 #ifdef USE_OPENGL
-		renderQuad = { dx, dy, width, height };
+		render_quad = { dx, dy, width, height };
 		crop_rect = { cx, cy, cw, ch };
 #else
 
@@ -3165,6 +3305,7 @@ void auto_crop_image()
 		{
 			SDL_RenderSetLogicalSize(mon->amiga_renderer, height, width);
 			render_quad = { -(width - height) / 2, (width - height) / 2, width, height };
+			crop_rect = { -(width - height) / 2, (width - height) / 2, width, height };
 		}
 
 		if (vkbd_allowed(0))
@@ -3343,3 +3484,200 @@ void screenshot(int monid, int mode, int doprepare)
 
 	save_thumb(screenshot_filename);
 }
+
+/**
+ * @brief Sets the required SDL GL attributes before window creation.
+ *
+ * This function configures the OpenGL context version and other attributes.
+ * It requests an OpenGL 2.1 context, which corresponds to GLSL version 120.
+ * This specific version is chosen to ensure maximum compatibility across
+ * various platforms (macOS, Linux, Raspberry Pi) and to support the legacy
+ * shaders used in the CRT emulation filter (see `crtemu.h`).
+ *
+ * By requesting OpenGL 2.1 without a CORE_PROFILE mask, we allow SDL to
+ * create a compatibility profile. This is essential for running the GLSL 1.20
+ * shaders, as a core profile would reject them. This approach provides a
+ * stable and widely supported rendering backend.
+ *
+ * @return true if all attributes were set successfully, false otherwise.
+ */
+[[nodiscard]] bool set_opengl_attributes()
+{
+	bool success = true;
+
+	// Request a desktop OpenGL 2.1 compatibility context for GLSL 1.20 shaders.
+	success &= (SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, 0) == 0);
+	success &= (SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY) == 0);
+	success &= (SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2) == 0);
+	success &= (SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1) == 0);
+
+	// Sensible defaults.
+	success &= (SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1) == 0);
+	success &= (SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 16) == 0);
+	success &= (SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 0) == 0);
+
+	// Optional: request RGBA8
+	success &= (SDL_GL_SetAttribute(SDL_GL_RED_SIZE,   8) == 0);
+	success &= (SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 8) == 0);
+	success &= (SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE,  8) == 0);
+	success &= (SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 8) == 0);
+
+	const char* drv = SDL_GetCurrentVideoDriver();
+	write_log(_T("SDL video driver: %hs\n"), drv ? drv : "unknown");
+	write_log(_T("Requested OpenGL context: 2.1 compatibility\n"));
+
+	return success;
+}
+
+#ifdef USE_OPENGL
+
+static bool is_gles_context()
+{
+	const char* ver = reinterpret_cast<const char*>(glGetString(GL_VERSION));
+	return ver && (strstr(ver, "OpenGL ES") != nullptr || strstr(ver, "OpenGL ES-CM") != nullptr);
+}
+
+/**
+ * @brief Creates the OpenGL context and initializes the GLEW extension loader.
+ *
+ * This function must be called after an SDL window has been successfully
+ * created. It performs the final steps required to prepare for OpenGL
+ * rendering:
+ * 1. Creates an OpenGL context and associates it with the given window.
+ * 2. Binds the newly created context to the current thread.
+ * 3. Initializes the GLEW library, which dynamically loads the function
+ *    pointers for all available OpenGL extensions. This is essential for
+ *    accessing any functionality beyond the OpenGL 1.1 core.
+ *
+ * The function includes error checking after each step and will log detailed
+ * error messages if any part of the process fails. It also logs the vendor,
+ * renderer, and version strings for debugging purposes.
+ *
+ * @param window A pointer to the SDL_Window that the OpenGL context will be
+ *               created for.
+ * @return true if the context was created and GLEW was initialized
+ *         successfully, false otherwise.
+ */
+[[nodiscard]] bool init_opengl_context(SDL_Window* window)
+{
+	write_log("DEBUG: Initializing OpenGL Context...\n");
+
+	gl_context = SDL_GL_CreateContext(window);
+	if (!gl_context) {
+		write_log(_T("!!! SDL_GL_CreateContext failed: %hs\n"), SDL_GetError());
+		return false;
+	}
+
+	if (SDL_GL_MakeCurrent(window, gl_context) != 0) {
+		write_log(_T("!!! SDL_GL_MakeCurrent failed: %hs\n"), SDL_GetError());
+		SDL_GL_DeleteContext(gl_context);
+		gl_context = nullptr;
+		return false;
+	}
+
+	// GLEW: enable modern/core entry points before init, then clear benign error.
+	glewExperimental = GL_TRUE;
+	const GLenum glew_err = glewInit();
+	(void)glGetError(); // clear spurious GL_INVALID_ENUM produced by glewInit on core profiles
+
+	if (glew_err != GLEW_OK) {
+		write_log(_T("!!! Error initializing GLEW: %hs\n"), glewGetErrorString(glew_err));
+		// If GLEW reports an error but GL is valid, continue; otherwise fail.
+		const GLubyte* ver = glGetString(GL_VERSION);
+		if (!ver) {
+			write_log(_T("!!! glGetString(GL_VERSION) is null; failing OpenGL init.\n"));
+			SDL_GL_DeleteContext(gl_context);
+			gl_context = nullptr;
+			return false;
+		}
+	}
+
+	// Reject GLES contexts (desktop GLEW does not support GLES reliably).
+	if (is_gles_context()) {
+		const char* ver = reinterpret_cast<const char*>(glGetString(GL_VERSION));
+		write_log(_T("!!! OpenGL ES context detected (%hs); desktop GLEW not supported.\n"), ver ? ver : "unknown");
+		SDL_GL_DeleteContext(gl_context);
+		gl_context = nullptr;
+		return false;
+	}
+
+	const char* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
+	const char* version  = reinterpret_cast<const char*>(glGetString(GL_VERSION));
+	const char* sl_ver   = reinterpret_cast<const char*>(glGetString(GL_SHADING_LANGUAGE_VERSION));
+	write_log(_T("OpenGL Renderer: %hs\n"), renderer ? renderer : "unknown");
+	write_log(_T("OpenGL Version:  %hs\n"), version ? version : "unknown");
+	write_log(_T("GLSL Version:    %hs\n"), sl_ver ? sl_ver : "unknown");
+
+	return true;
+}
+
+/**
+   * @brief Creates a new tightly-packed pixel buffer from a specified cropped region of an SDL_Surface.
+   *
+   * This function is essential for preparing pixel data for rendering systems like `crtemu_present`
+   * that require pixel buffers to be tightly packed (without any additional padding bytes, i.e., pitch / stride.
+   *
+   * SDL_Surfaces, especially when representing a sub-region or when their `pitch` (bytes per row)
+   * is greater than `(width * bytes_per_pixel)`, do not always guarantee tightly-packed data.
+   * This function addresses that by:
+   * 1. Calculating the effective crop region, clamped to the source surface's boundaries.
+   * 2. Allocating a new memory buffer precisely sized for the cropped, tightly-packed data.
+   * 3. Copying the pixel data row by row from the source surface into the new buffer,
+   *    ensuring contiguity and removing any pitch discrepancies.
+   *
+   * The caller is responsible for deallocating the returned buffer using `delete[]`.
+   *
+   * @param src A pointer to the source SDL_Surface from which to extract pixels. Must not be null.
+   * @param crop The SDL_Rect defining the desired region to crop from the source surface.
+   * @param out_buffer_rect An output parameter. On successful return, this SDL_Rect will contain
+   *   the actual dimensions (x, y, w, h) of the data within the returned `uae_u8*` buffer.
+   *   The x and y components will typically be 0, and w/h will represent the width and height
+   *   of the copied pixel data.
+   * @return A pointer to a newly allocated `uae_u8` array containing the tightly-packed pixel data
+   *   of the cropped region. Returns `nullptr` if `src` is null, the effective crop region is
+   *   invalid/empty, or memory allocation fails.
+   */
+static uae_u8* create_packed_pixel_buffer(const SDL_Surface* src,
+	const SDL_Rect& crop, SDL_Rect& out_buffer_rect)
+{
+	if (!src)
+	{
+		out_buffer_rect = { 0, 0, 0, 0 };
+		return nullptr;
+	}
+
+	const SDL_Rect src_bounds = { 0, 0, src->w, src->h };
+	SDL_Rect final_crop;
+	if (!SDL_IntersectRect(&crop, &src_bounds, &final_crop))
+	{
+		out_buffer_rect = { 0, 0, 0, 0 };
+		return nullptr;
+	}
+
+	const int bytes_per_pixel = src->format->BytesPerPixel;
+	const int buffer_row_bytes = final_crop.w * bytes_per_pixel;
+	const size_t buffer_size = buffer_row_bytes * final_crop.h;
+
+	if (buffer_size == 0)
+	{
+		out_buffer_rect = { 0, 0, 0, 0 };
+		return nullptr;
+	}
+	uae_u8* packed_buffer = new uae_u8[buffer_size];
+
+	const uae_u8* src_row_start = static_cast<const uae_u8*>(src->pixels)
+							  + final_crop.y * src->pitch
+							  + final_crop.x * bytes_per_pixel;
+	uae_u8* dst_row_start = packed_buffer;
+
+	for (int y = 0; y < final_crop.h; ++y)
+	{
+		memcpy(dst_row_start, src_row_start, buffer_row_bytes);
+		src_row_start += src->pitch;
+		dst_row_start += buffer_row_bytes;
+	}
+
+	out_buffer_rect = final_crop;
+	return packed_buffer;
+}
+#endif

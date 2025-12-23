@@ -90,8 +90,9 @@ static int receive_buf_size, receive_buf_count;
 static void shmem_serial_send(uae_u32 data)
 {
 	sermap1->active_write = true;
-	if (!sermap1->active_read)
+	if (!sermap1->active_read) {
 		return;
+	}
 	uae_u32 v = sermap1->write_offset;
 	if (((v + 1) & (SERMAP_SIZE - 1)) == sermap1->read_offset) {
 		write_log(_T("Shared serial port memory overflow!\n"));
@@ -105,11 +106,13 @@ static void shmem_serial_send(uae_u32 data)
 static uae_u32 shmem_serial_receive()
 {
 	sermap2->active_read = true;
-	if (!sermap2->active_write)
+	if (!sermap2->active_write) {
 		return 0xffffffff;
+	}
 	uae_u32 v = sermap2->read_offset;
-	if (v == sermap2->write_offset)
+	if (v == sermap2->write_offset) {
 		return 0xffffffff;
+	}
 	const uae_u32 data = sermap2->data[v];
 	v++;
 	v &= (SERMAP_SIZE - 1);

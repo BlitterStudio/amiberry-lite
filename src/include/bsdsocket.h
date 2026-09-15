@@ -10,6 +10,15 @@
 #ifndef UAE_BSDSOCKET_H
 #define UAE_BSDSOCKET_H
 
+#ifdef _WIN32
+/* Winsock2 must be included before any C++ std headers that bring in
+ * std::byte (via 'using namespace std') to avoid ambiguity with the
+ * rpcndr.h 'byte' typedef.  Including it here makes bsdsocket.h
+ * self-contained — every consumer gets the SOCKET type automatically. */
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#endif
+
 #include "uae/types.h"
 #include "thread.h"
 
@@ -17,7 +26,9 @@
 
 extern int log_bsd;
 
-#define ISBSDTRACE (log_bsd || BSD_TRACING_ENABLED) 
+typedef struct TrapContext TrapContext;
+
+#define ISBSDTRACE (log_bsd || BSD_TRACING_ENABLED)
 #define BSDTRACE(x) do { if (ISBSDTRACE) { write_log x; } } while(0)
 
 extern int init_socket_layer (void);
@@ -32,9 +43,13 @@ extern void deinit_socket_layer (void);
 
 #define MAXADDRLEN 256
 
-#ifdef _WIN32
+#if defined(_WIN32)
 #define SOCKET_TYPE SOCKET
 #else
+#ifndef INVALID_SOCKET
+#define INVALID_SOCKET (-1)
+#endif
+typedef int SOCKET;
 #define SOCKET_TYPE int
 #endif
 
@@ -74,7 +89,7 @@ struct socketbase {
 
 	unsigned int *mtable;	/* window messages allocated for asynchronous event notification */
 	/* host-specific fields below */
-#ifdef _WIN32
+#if defined(_WIN32)
 	SOCKET_TYPE sockAbort;	/* for aborting WinSock2 select() (damn Microsoft) */
 	SOCKET_TYPE sockAsync;	/* for aborting WSBAsyncSelect() in window message handler */
 	int needAbort;		/* abort flag */
@@ -97,8 +112,6 @@ struct socketbase {
 	uae_u32 sets [3];
 	uae_u32 timeout;
 	uae_u32 sigmp;
-#endif
-#ifdef AMIBERRY
 	TrapContext *context;
 #endif
 };
@@ -195,10 +208,9 @@ extern uae_u32 host_ReleaseSocket (void);
 extern uae_u32 host_ReleaseCopyOfSocket (void);
 extern uae_u32 host_Inet_NtoA(TrapContext *ctx, SB, uae_u32);
 extern uae_u32 host_inet_addr(TrapContext *ctx, uae_u32);
-extern uae_u32 host_Inet_LnaOf (void);
-extern uae_u32 host_Inet_NetOf (void);
-extern uae_u32 host_Inet_MakeAddr (void);
-extern uae_u32 host_inet_network (void);
+extern uae_u32 host_Inet_LnaOf(uae_u32 in);
+extern uae_u32 host_Inet_NetOf(uae_u32 in);
+extern uae_u32 host_Inet_MakeAddr(uae_u32 net, uae_u32 host);
 extern void host_gethostbynameaddr (TrapContext *, SB, uae_u32, uae_u32, long);
 extern uae_u32 host_getnetbyname (void);
 extern uae_u32 host_getnetbyaddr (void);

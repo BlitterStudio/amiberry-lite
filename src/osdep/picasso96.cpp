@@ -101,6 +101,8 @@ void mman_ResetWatch (PVOID lpBaseAddress, SIZE_T dwRegionSize);
 #else
 static bool* dirty_page_map[MAX_RTG_BOARDS];
 static int dirty_page_map_size[MAX_RTG_BOARDS];
+static int min_dirty_page_index[MAX_RTG_BOARDS];
+static int max_dirty_page_index[MAX_RTG_BOARDS];
 #endif
 
 static void picasso_flushpixels(int index, uae_u8 *src, int offset, bool render);
@@ -442,8 +444,13 @@ static void mark_dirty(int index, uae_u8* addr, int size)
 	if (start_page < 0) start_page = 0;
 	if (end_page >= dirty_page_map_size[index]) end_page = dirty_page_map_size[index] - 1;
 
-	for (int i = start_page; i <= end_page; ++i) {
-		dirty_page_map[index][i] = true;
+	if (start_page < min_dirty_page_index[index]) min_dirty_page_index[index] = start_page;
+	if (end_page > max_dirty_page_index[index]) max_dirty_page_index[index] = end_page;
+
+	if (start_page <= end_page) {
+		for (int i = start_page; i <= end_page; ++i) {
+			dirty_page_map[index][i] = true;
+		}
 	}
 }
 #endif
@@ -2745,6 +2752,15 @@ void picasso_allocatewritewatch (int index, int gfxmemsize)
 	gwwbufsize[index] = gfxmemsize / gwwpagesize[index] + 1;
 	gwwpagemask[index] = gwwpagesize[index] - 1;
 	gwwbuf[index] = xmalloc (void*, gwwbufsize[index]);
+
+	delete[] dirty_page_map[index];
+	const int pages = gwwbufsize[index];
+	dirty_page_map[index] = new bool[pages];
+	dirty_page_map_size[index] = pages;
+	// Initialize min/max to the "empty" state
+	min_dirty_page_index[index] = pages;
+	max_dirty_page_index[index] = -1;
+	memset(dirty_page_map[index], 0, pages * sizeof(bool));
 #endif
 }
 
@@ -2781,7 +2797,18 @@ int picasso_getwritewatch (int index, int offset, uae_u8 ***gwwbufp, uae_u8 **st
 	const int page_size = gwwpagesize[index];
 	int count = 0;
 
-	for (int i = 0; i < dirty_page_map_size[index]; ++i) {
+	int start = min_dirty_page_index[index];
+	int end = max_dirty_page_index[index];
+
+	if (start > end) {
+		return 0;
+	}
+
+	// Reset bounds immediately for next frame accumulation
+	min_dirty_page_index[index] = dirty_page_map_size[index];
+	max_dirty_page_index[index] = -1;
+
+	for (int i = start; i <= end; ++i) {
 		if (dirty_page_map[index][i]) {
 			if (count < gwwbufsize[index]) {
 				gwwbuf[index][count++] = const_cast<uae_u8*>(base) + i * page_size;
@@ -6200,41 +6227,98 @@ static int render_thread(void *v)
 	return 0;
 }
 
+// RTG memory banks: use MEMORY_FUNCTIONS for the read/check/xlate halves but
+// provide custom put functions that also call mark_dirty(). Without this,
+// direct CPU writes to VRAM (software renderers, apps bypassing the P96 API)
+// are invisible to picasso_getwritewatch and the RTG display never updates.
+// On WinUAE-native Windows builds the write-watch is provided by the OS
+// (GetWriteWatch) and mark_dirty is not defined, so fall back to the stock
+// MEMORY_FUNCTIONS in that case.
+#ifndef _WIN32
+#define GFXMEM_PUT_FUNCTIONS(name, index) \
+static void REGPARAM3 name ## _lput (uaecptr, uae_u32) REGPARAM; \
+static void REGPARAM2 name ## _lput (uaecptr addr, uae_u32 l) \
+{ \
+	uae_u8 *m; \
+	addr -= name ## _bank.startaccessmask; \
+	addr &= name ## _bank.mask; \
+	m = name ## _bank.baseaddr + addr; \
+	do_put_mem_long ((uae_u32 *)m, l); \
+	mark_dirty((index), m, 4); \
+} \
+static void REGPARAM3 name ## _wput (uaecptr, uae_u32) REGPARAM; \
+static void REGPARAM2 name ## _wput (uaecptr addr, uae_u32 w) \
+{ \
+	uae_u8 *m; \
+	addr -= name ## _bank.startaccessmask; \
+	addr &= name ## _bank.mask; \
+	m = name ## _bank.baseaddr + addr; \
+	do_put_mem_word ((uae_u16 *)m, w); \
+	mark_dirty((index), m, 2); \
+} \
+static void REGPARAM3 name ## _bput (uaecptr, uae_u32) REGPARAM; \
+static void REGPARAM2 name ## _bput (uaecptr addr, uae_u32 b) \
+{ \
+	addr -= name ## _bank.startaccessmask; \
+	addr &= name ## _bank.mask; \
+	name ## _bank.baseaddr[addr] = b; \
+	mark_dirty((index), name ## _bank.baseaddr + addr, 1); \
+}
+
+#define GFXMEM_MEMORY_FUNCTIONS(name, index) \
+MEMORY_LGET(name); \
+MEMORY_WGET(name); \
+MEMORY_BGET(name); \
+GFXMEM_PUT_FUNCTIONS(name, index) \
+MEMORY_CHECK(name); \
+MEMORY_XLATE(name);
+
+// Force JIT to route writes through the bank's *_put handlers (by flagging
+// the bank as special for writes via S_WRITE) so mark_dirty() runs on every
+// CPU poke to VRAM. WinUAE relies on GetWriteWatch() for this instead.
+// Without S_WRITE, JIT blocks that write directly to natmem never mark the
+// touched pages dirty and picasso_flushpixels uploads nothing.
+#define GFXMEM_JIT_WRITE_FLAG S_WRITE
+#else
+#define GFXMEM_MEMORY_FUNCTIONS(name, index) MEMORY_FUNCTIONS(name)
+#define GFXMEM_JIT_WRITE_FLAG 0
+#endif
+
 extern addrbank gfxmem_bank;
-MEMORY_FUNCTIONS(gfxmem);
+GFXMEM_MEMORY_FUNCTIONS(gfxmem, 0)
 addrbank gfxmem_bank = {
 	gfxmem_lget, gfxmem_wget, gfxmem_bget,
 	gfxmem_lput, gfxmem_wput, gfxmem_bput,
 	gfxmem_xlate, gfxmem_check, nullptr, nullptr, _T("RTG RAM"),
 	dummy_lgeti, dummy_wgeti,
-	ABFLAG_RAM | ABFLAG_RTG | ABFLAG_DIRECTACCESS, 0, 0
+	ABFLAG_RAM | ABFLAG_RTG | ABFLAG_DIRECTACCESS, 0, GFXMEM_JIT_WRITE_FLAG
 };
 extern addrbank gfxmem2_bank;
-MEMORY_FUNCTIONS(gfxmem2);
+GFXMEM_MEMORY_FUNCTIONS(gfxmem2, 1)
 addrbank gfxmem2_bank = {
 	gfxmem2_lget, gfxmem2_wget, gfxmem2_bget,
 	gfxmem2_lput, gfxmem2_wput, gfxmem2_bput,
 	gfxmem2_xlate, gfxmem2_check, nullptr, nullptr, _T("RTG RAM #2"),
 	dummy_lgeti, dummy_wgeti,
-	ABFLAG_RAM | ABFLAG_RTG | ABFLAG_DIRECTACCESS, 0, 0
+	ABFLAG_RAM | ABFLAG_RTG | ABFLAG_DIRECTACCESS, 0, GFXMEM_JIT_WRITE_FLAG
 };
 extern addrbank gfxmem3_bank;
-MEMORY_FUNCTIONS(gfxmem3);
+GFXMEM_MEMORY_FUNCTIONS(gfxmem3, 2)
 addrbank gfxmem3_bank = {
 	gfxmem3_lget, gfxmem3_wget, gfxmem3_bget,
 	gfxmem3_lput, gfxmem3_wput, gfxmem3_bput,
 	gfxmem3_xlate, gfxmem3_check, nullptr, nullptr, _T("RTG RAM #3"),
 	dummy_lgeti, dummy_wgeti,
-	ABFLAG_RAM | ABFLAG_RTG | ABFLAG_DIRECTACCESS, 0, 0
+	ABFLAG_RAM | ABFLAG_RTG | ABFLAG_DIRECTACCESS, 0, GFXMEM_JIT_WRITE_FLAG
 };
 extern addrbank gfxmem4_bank;
-MEMORY_FUNCTIONS(gfxmem4);
+GFXMEM_MEMORY_FUNCTIONS(gfxmem4, 3)
 addrbank gfxmem4_bank = {
 	gfxmem4_lget, gfxmem4_wget, gfxmem4_bget,
 	gfxmem4_lput, gfxmem4_wput, gfxmem4_bput,
 	gfxmem4_xlate, gfxmem4_check, nullptr, nullptr, _T("RTG RAM #4"),
 	dummy_lgeti, dummy_wgeti,
-	ABFLAG_RAM | ABFLAG_RTG | ABFLAG_DIRECTACCESS, 0, 0
+	ABFLAG_RAM | ABFLAG_RTG | ABFLAG_DIRECTACCESS, 0, GFXMEM_JIT_WRITE_FLAG
 };
 addrbank *gfxmem_banks[MAX_RTG_BOARDS];
 

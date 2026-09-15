@@ -6081,6 +6081,11 @@ static void picasso_flushpixels(int index, uae_u8 *src, int off, bool render)
 				for (int i = 0; i < gwwcnt; i++)
 					gwwbuf[index][i] = src_start[split] + i * gwwpagesize[index];
 				matchcount += (int)gwwcnt;
+
+				if (gwwcnt == 0) {
+					continue;
+				}
+				dofull = gwwcnt >= (regionsize / gwwpagesize[index]) * 80 / 100;
 			} else {
 #ifdef _WIN32
 				ULONG ps;
@@ -6088,6 +6093,11 @@ static void picasso_flushpixels(int index, uae_u8 *src, int off, bool render)
 				if (mman_GetWriteWatch(src_start[split], regionsize, gwwbuf[index], &gwwcnt, &ps))
 					continue;
 				matchcount += (int)gwwcnt;
+
+				if (gwwcnt == 0) {
+					continue;
+				}
+				dofull = gwwcnt >= (regionsize / gwwpagesize[index]) * 80 / 100;
 #else
 				// The emulated write-watch drains the whole dirty map, so it
 				// must only be drained on the first region; the second
@@ -6101,9 +6111,13 @@ static void picasso_flushpixels(int index, uae_u8 *src, int off, bool render)
 
 				// The reused page list spans both split regions (and may
 				// contain pages outside the visible screen, e.g. offscreen
-				// bitmaps), so filter it down to this region before deciding
-				// between a full copy and partial rows. Windows' region-scoped
-				// GetWriteWatch never sees foreign pages here.
+				// bitmaps), so filter it down to this region when deciding
+				// between a full copy and partial rows. The copy loop below
+				// must keep iterating the FULL list: it range-checks each
+				// entry itself, and truncating the count here would hide
+				// matching pages that sit behind foreign (lower-split or
+				// offscreen) pages in the page-ordered list after their
+				// dirty bits have already been cleared.
 				int region_gwwcnt = 0;
 				for (int i = 0; i < gwwcnt; i++) {
 					const uae_u8* p = static_cast<uae_u8*>(gwwbuf[index][i]);
@@ -6112,14 +6126,13 @@ static void picasso_flushpixels(int index, uae_u8 *src, int off, bool render)
 					}
 				}
 				matchcount += region_gwwcnt;
-				gwwcnt = region_gwwcnt;
+
+				if (region_gwwcnt == 0) {
+					continue;
+				}
+				dofull = region_gwwcnt >= (regionsize / gwwpagesize[index]) * 80 / 100;
 #endif
 			}
-
-			if (gwwcnt == 0) {
-				continue;
-			}
-			dofull = gwwcnt >= (regionsize / gwwpagesize[index]) * 80 / 100;
 
 			if (!dstp) {
 				dstp = gfx_lock_picasso(monid, dofull);

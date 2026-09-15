@@ -10870,10 +10870,6 @@ void check_prefs_changed_custom(void)
 		chipmem_bank.jit_write_flag = S_WRITE;
 	else
 		chipmem_bank.jit_write_flag = 0;
-
-	chipmem_bank.lput = chipmem_lput;
-	chipmem_bank.wput = chipmem_wput;
-	chipmem_bank.bput = chipmem_bput;
 #endif
 
 	if (!currprefs.keyboard_connected && changed_prefs.keyboard_connected) {

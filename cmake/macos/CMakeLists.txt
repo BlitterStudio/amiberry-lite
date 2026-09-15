@@ -31,6 +31,15 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
 add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         COMMAND dylibbundler -od -b -x $<TARGET_FILE:${PROJECT_NAME}> -d $<TARGET_FILE_DIR:${PROJECT_NAME}>/../Frameworks/ -p @executable_path/../Frameworks/)
 
+# Homebrew's sdl2 formula is sdl2-compat, which dlopens libSDL3.dylib at
+# runtime; dylibbundler can't see dlopen dependencies, so bundle SDL3 here.
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND}
+        -DBUNDLE_DIR=$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Frameworks
+        -DAPP_BINARY=$<TARGET_FILE:${PROJECT_NAME}>
+        -DSDL2_LIBRARY=$<TARGET_FILE:SDL2::SDL2>
+        -P ${CMAKE_CURRENT_LIST_DIR}/BundleSDL3Compat.cmake)
+
 if (NOT "${CMAKE_GENERATOR}" MATCHES "Xcode")
     install(FILES $<TARGET_FILE:capsimage>
             DESTINATION $<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/plugins/)

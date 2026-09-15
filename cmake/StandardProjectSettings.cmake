@@ -1,5 +1,5 @@
 set(CMAKE_ASM_COMPILER ${CMAKE_C_COMPILER})
-set(CMAKE_ASM_COMPILER_ARG1 ${CMAKE_ASM_COMPILER_ARG1})
+set(CMAKE_ASM_COMPILER_ARG1 ${CMAKE_C_COMPILER_ARG1})
 find_program(CCACHE_PROGRAM ccache)
 if(CCACHE_PROGRAM AND NOT CMAKE_C_COMPILER MATCHES "ccache")
     set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
@@ -54,6 +54,12 @@ if(WITH_PGO_GENERATE OR WITH_PGO_USE)
         message(FATAL_ERROR "PGO requires a single-config Release build")
     endif()
 
+    # The profile flags below are GCC-specific: Clang rejects
+    # -fprofile-prefix-path and lacks the missing-profile/coverage-mismatch
+    # warning names (it uses -fprofile-instr-generate/-use instead).
+    if(NOT CMAKE_C_COMPILER_ID STREQUAL "GNU")
+        message(FATAL_ERROR "WITH_PGO_GENERATE/WITH_PGO_USE require GCC")
+    endif()
     if(WITH_PGO_GENERATE)
         list(APPEND AMIBERRY_COMPILE_OPTIONS
             "-fprofile-generate=${PGO_PROFILE_DIR}"

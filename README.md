@@ -11,14 +11,16 @@ Built on the WinUAE emulation core, Amiberry-Lite runs the full Amiga range —
 from the A500 to the A4000 — on ARM, ARM64, x86-64 and RISC-V hardware, from a
 Raspberry Pi to a desktop workstation.
 
-Amiberry-Lite is the streamlined sibling of [Amiberry](https://github.com/BlitterStudio/amiberry):
-a leaner SDL2-based codebase focused on the classic Linux and macOS desktop
-experience. If you need Android, Windows, libretro or the ImGui GUI, use
-Amiberry instead.
+Amiberry-Lite is the streamlined sibling of [Amiberry](https://github.com/BlitterStudio/amiberry).
+It is based on an older version of the WinUAE core and has fewer features than
+the full emulator — in return it is leaner and faster, particularly on
+low-end hardware. Compatibility with demanding software is somewhat lower than
+full Amiberry; if you need maximum accuracy, Android, Windows, libretro or the
+ImGui GUI, use [Amiberry](https://github.com/BlitterStudio/amiberry) instead.
 
 ## Features
 
-- **Full Amiga compatibility** — Built on the WinUAE core: OCS/ECS/AGA chipsets, expanded memory, Picasso96 RTG
+- **Amiga compatibility** — Built on the WinUAE core: OCS/ECS/AGA chipsets, expanded memory, Picasso96 RTG
 - **WHDLoad Support** — Launch WHDLoad titles directly with automatic configuration
 - **Custom Controls** — Per-game input mapping, RetroArch-compatible controller support
 - **Virtual Keyboard** — On-screen keyboard for gamepad-only setups
@@ -30,7 +32,7 @@ Prebuilt packages are published on the
 [Releases](https://github.com/BlitterStudio/amiberry-lite/releases) page:
 
 - **Linux**: `.deb` packages (Debian bullseye/bookworm/trixie — amd64, arm64, armhf)
-- **macOS**: universal DMG for Apple Silicon
+- **macOS**: DMG for Apple Silicon (arm64)
 
 ## Building from Source
 
@@ -40,7 +42,7 @@ Prebuilt packages are published on the
 sudo apt install cmake ninja-build build-essential \
   libsdl2-dev libsdl2-image-dev libsdl2-ttf-dev \
   libflac-dev libmpg123-dev libpng-dev zlib1g-dev \
-  libserialport-dev libportmidi-dev libenet-dev libmpeg2-dev
+  libserialport-dev libportmidi-dev libenet-dev libmpeg2-dev libzstd-dev
 ```
 
 ### macOS

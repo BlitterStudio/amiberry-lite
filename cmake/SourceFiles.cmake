@@ -403,6 +403,25 @@ endif ()
 target_compile_options(${PROJECT_NAME} PRIVATE -fno-pie)
 target_link_options(${PROJECT_NAME} PRIVATE -no-pie)
 
+# Apply target-specific flags from StandardProjectSettings.cmake.
+# These are target-scoped so they don't leak into the external/ subdirectory
+# builds (mt32emu, floppybridge, capsimage, guisan).
+target_compile_options(${PROJECT_NAME} PRIVATE ${AMIBERRY_COMPILE_OPTIONS})
+if(AMIBERRY_LINK_OPTIONS)
+    target_link_options(${PROJECT_NAME} PRIVATE ${AMIBERRY_LINK_OPTIONS})
+endif()
+
+# Apply platform-specific include/link paths from StandardProjectSettings.cmake
+if(AMIBERRY_PLATFORM_INCLUDE_DIRS)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${AMIBERRY_PLATFORM_INCLUDE_DIRS})
+endif()
+if(AMIBERRY_PLATFORM_LINK_DIRS)
+    target_link_directories(${PROJECT_NAME} PRIVATE ${AMIBERRY_PLATFORM_LINK_DIRS})
+endif()
+if(AMIBERRY_PLATFORM_LIBS)
+    target_link_libraries(${PROJECT_NAME} PRIVATE ${AMIBERRY_PLATFORM_LIBS})
+endif()
+
 target_include_directories(${PROJECT_NAME} PRIVATE
         src
         src/osdep

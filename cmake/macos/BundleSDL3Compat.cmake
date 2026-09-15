@@ -55,12 +55,14 @@ if(NOT codesign_result EQUAL 0)
     message(WARNING "codesign failed for bundled libSDL3.dylib")
 endif()
 
-# libSDL3.dylib was added after dylibbundler signed the bundle; re-sign the
-# app so the bundle seal stays valid.
+# libSDL3.dylib was added after dylibbundler signed the bundle. Nested code
+# must be signed before the enclosing bundle, so sign libSDL3.dylib first
+# (above), then re-seal the whole .app bundle.
+get_filename_component(app_bundle "${APP_BINARY}/../../.." ABSOLUTE)
 execute_process(
-    COMMAND codesign --force --deep --sign - "${APP_BINARY}"
+    COMMAND codesign --force --deep --sign - "${app_bundle}"
     RESULT_VARIABLE app_codesign_result)
 if(NOT app_codesign_result EQUAL 0)
-    message(WARNING "codesign failed for ${APP_BINARY}")
+    message(WARNING "codesign failed for ${app_bundle}")
 endif()
 message(STATUS "Bundled ${SDL3_LIBRARY} for sdl2-compat")

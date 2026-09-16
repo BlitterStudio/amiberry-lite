@@ -35,6 +35,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <atomic>
 
 #include "uae.h"
 
@@ -99,8 +100,14 @@ static int picasso96_PCT = PCT_Unknown;
 int mman_GetWriteWatch (PVOID lpBaseAddress, SIZE_T dwRegionSize, PVOID *lpAddresses, PULONG_PTR lpdwCount, PULONG lpdwGranularity);
 void mman_ResetWatch (PVOID lpBaseAddress, SIZE_T dwRegionSize);
 #else
-static bool* dirty_page_map[MAX_RTG_BOARDS];
+static std::atomic<bool>* dirty_page_map[MAX_RTG_BOARDS];
 static int dirty_page_map_size[MAX_RTG_BOARDS];
+// Dirty-page bounds packed into a single word, (min_page << 32) | (max_page + 1):
+// mark_dirty() runs in the CPU write handlers while picasso_getwritewatch()
+// drains from the RTG render thread, and a single word lets the drain claim
+// the whole range with one compare_exchange so a concurrent writer can never
+// have its freshly published range overwritten by a reset.
+static std::atomic<uae_u64> dirty_bounds[MAX_RTG_BOARDS];
 #endif
 
 static void picasso_flushpixels(int index, uae_u8 *src, int offset, bool render);
@@ -425,6 +432,26 @@ static int gwwbufsize[MAX_RTG_BOARDS], gwwpagesize[MAX_RTG_BOARDS], gwwpagemask[
 //extern uae_u8* natmem_offset;
 
 #ifndef _WIN32
+// Widen the published dirty range. Called from the CPU write handlers after
+// the page bits have been set.
+static void dirty_bounds_widen(int index, int start_page, int end_page)
+{
+	uae_u64 cur = dirty_bounds[index].load();
+	for (;;) {
+		const int cur_min = static_cast<int>(cur >> 32);
+		const int cur_max = static_cast<int32_t>(static_cast<uint32_t>(cur)) - 1;
+		const int new_min = start_page < cur_min ? start_page : cur_min;
+		const int new_max = end_page > cur_max ? end_page : cur_max;
+		if (new_min == cur_min && new_max == cur_max) {
+			return;
+		}
+		const uae_u64 next = (static_cast<uae_u64>(new_min) << 32) | static_cast<uae_u32>(new_max + 1);
+		if (dirty_bounds[index].compare_exchange_weak(cur, next)) {
+			return;
+		}
+	}
+}
+
 static void mark_dirty(int index, uae_u8* addr, int size)
 {
 	if (index < 0 || !dirty_page_map[index])
@@ -442,9 +469,18 @@ static void mark_dirty(int index, uae_u8* addr, int size)
 	if (start_page < 0) start_page = 0;
 	if (end_page >= dirty_page_map_size[index]) end_page = dirty_page_map_size[index] - 1;
 
-	for (int i = start_page; i <= end_page; ++i) {
-		dirty_page_map[index][i] = true;
+	if (start_page > end_page) {
+		return;
 	}
+	for (int i = start_page; i <= end_page; ++i) {
+		dirty_page_map[index][i].store(true, std::memory_order_relaxed);
+	}
+
+	// Publish the widened bounds only after the bits are set. The bounds are
+	// a single word so picasso_getwritewatch() can claim the whole range with
+	// one compare_exchange; two separate words would let a drain reset one
+	// half after a writer published, losing the range until a later write.
+	dirty_bounds_widen(index, start_page, end_page);
 }
 #endif
 
@@ -2745,6 +2781,16 @@ void picasso_allocatewritewatch (int index, int gfxmemsize)
 	gwwbufsize[index] = gfxmemsize / gwwpagesize[index] + 1;
 	gwwpagemask[index] = gwwpagesize[index] - 1;
 	gwwbuf[index] = xmalloc (void*, gwwbufsize[index]);
+
+	delete[] dirty_page_map[index];
+	const int pages = gwwbufsize[index];
+	dirty_page_map[index] = new std::atomic<bool>[pages];
+	dirty_page_map_size[index] = pages;
+	// Initialize the bounds to the "empty" state (min = pages, max = -1)
+	dirty_bounds[index].store(static_cast<uae_u64>(pages) << 32);
+	for (int i = 0; i < pages; i++) {
+		dirty_page_map[index][i].store(false, std::memory_order_relaxed);
+	}
 #endif
 }
 
@@ -2781,19 +2827,49 @@ int picasso_getwritewatch (int index, int offset, uae_u8 ***gwwbufp, uae_u8 **st
 	const int page_size = gwwpagesize[index];
 	int count = 0;
 
-	for (int i = 0; i < dirty_page_map_size[index]; ++i) {
-		if (dirty_page_map[index][i]) {
+	// Claim the whole dirty range with a single compare_exchange. If a
+	// writer widened the bounds between our load and the exchange, the
+	// exchange fails and we retry against the wider range instead of
+	// resetting over the freshly published pages and losing them.
+	const uae_u64 empty = static_cast<uae_u64>(dirty_page_map_size[index]) << 32;
+	uae_u64 cur = dirty_bounds[index].load();
+	int start;
+	int end;
+	for (;;) {
+		start = static_cast<int>(cur >> 32);
+		end = static_cast<int32_t>(static_cast<uint32_t>(cur)) - 1;
+		if (start > end) {
+			return 0;
+		}
+		if (dirty_bounds[index].compare_exchange_weak(cur, empty)) {
+			break;
+		}
+	}
+
+	// Clear with a single read-modify-write: a plain load/store pair could
+	// let a concurrent writer set the bit between our load and our clear,
+	// erasing its mark even though it republished the bounds covering it.
+	for (int i = start; i <= end; ++i) {
+		if (dirty_page_map[index][i].exchange(false, std::memory_order_relaxed)) {
 			if (count < gwwbufsize[index]) {
 				gwwbuf[index][count++] = const_cast<uae_u8*>(base) + i * page_size;
 			}
-			dirty_page_map[index][i] = false; // Reset after reading
 		}
 	}
 
 	if (gwwbufp)
 		*gwwbufp = (uae_u8**)gwwbuf[index];
 	if (startp) {
-		*startp = const_cast<uae_u8*>(base);
+		// Match the Windows semantics: the region base is the board base
+		// plus the screen offset, not the bare board base. Returning the
+		// bare base would widen the caller's range filter to pages below
+		// the visible screen (e.g. offscreen bitmaps, the split region).
+		// The returned page list is page-aligned, so round the base down
+		// too: with a panned (SetPanning) screen offset that is not
+		// page-aligned, an unaligned base would reject the page holding
+		// the top-left of the visible screen after its dirty bit was
+		// already cleared, leaving it stale.
+		*startp = const_cast<uae_u8*>(base) + (offset & ~gwwpagemask[index]);
 	}
 	return count;
 #endif
@@ -2841,7 +2917,7 @@ bool picasso_is_vram_dirty (int index, uaecptr addr, int size)
 	if (end_page >= dirty_page_map_size[index]) end_page = dirty_page_map_size[index] - 1;
 
 	for (int i = start_page; i <= end_page; ++i) {
-		if (dirty_page_map[index][i]) { return true; }
+		if (dirty_page_map[index][i].load(std::memory_order_relaxed)) { return true; }
 	}
 	return false;
 #endif
@@ -5951,6 +6027,7 @@ static void picasso_flushpixels(int index, uae_u8 *src, int off, bool render)
 	int maxy = -1;
 	int miny = pheight - 1;
 	int flushlines = 0, matchcount = 0;
+	int partial_gwwcnt = -1; // dirty pages drained once, reused for both split regions
 	struct picasso_vidbuf_description *vidinfo = &picasso_vidinfo[monid];
 	bool overlay_updated = false;
 
@@ -6005,23 +6082,59 @@ static void picasso_flushpixels(int index, uae_u8 *src, int off, bool render)
 
 				for (int i = 0; i < gwwcnt; i++)
 					gwwbuf[index][i] = src_start[split] + i * gwwpagesize[index];
+				matchcount += (int)gwwcnt;
+
+				if (gwwcnt == 0) {
+					continue;
+				}
+				dofull = gwwcnt >= (regionsize / gwwpagesize[index]) * 80 / 100;
 			} else {
 #ifdef _WIN32
 				ULONG ps;
 				gwwcnt = gwwbufsize[index];
 				if (mman_GetWriteWatch(src_start[split], regionsize, gwwbuf[index], &gwwcnt, &ps))
 					continue;
+				matchcount += (int)gwwcnt;
+
+				if (gwwcnt == 0) {
+					continue;
+				}
+				dofull = gwwcnt >= (regionsize / gwwpagesize[index]) * 80 / 100;
 #else
-				gwwcnt = picasso_getwritewatch(index, off, (uae_u8***)&gwwbuf[index], &src_start[split]);
+				// The emulated write-watch drains the whole dirty map, so it
+				// must only be drained on the first region; the second
+				// (split) region reuses the same page list. Draining per
+				// region would clear pages that belong to the other region
+				// and leave it stale.
+				if (split == 0) {
+					partial_gwwcnt = picasso_getwritewatch(index, off, (uae_u8***)&gwwbuf[index], &src_start[split]);
+				}
+				gwwcnt = partial_gwwcnt;
+
+				// The reused page list spans both split regions (and may
+				// contain pages outside the visible screen, e.g. offscreen
+				// bitmaps), so filter it down to this region when deciding
+				// between a full copy and partial rows. The copy loop below
+				// must keep iterating the FULL list: it range-checks each
+				// entry itself, and truncating the count here would hide
+				// matching pages that sit behind foreign (lower-split or
+				// offscreen) pages in the page-ordered list after their
+				// dirty bits have already been cleared.
+				int region_gwwcnt = 0;
+				for (int i = 0; i < gwwcnt; i++) {
+					const uae_u8* p = static_cast<uae_u8*>(gwwbuf[index][i]);
+					if (p >= src_start[split] && p < src_end[split]) {
+						region_gwwcnt++;
+					}
+				}
+				matchcount += region_gwwcnt;
+
+				if (region_gwwcnt == 0) {
+					continue;
+				}
+				dofull = region_gwwcnt >= (regionsize / gwwpagesize[index]) * 80 / 100;
 #endif
 			}
-
-			matchcount += (int)gwwcnt;
-
-			if (gwwcnt == 0) {
-				continue;
-			}
-			dofull = gwwcnt >= (regionsize / gwwpagesize[index]) * 80 / 100;
 
 			if (!dstp) {
 				dstp = gfx_lock_picasso(monid, dofull);
@@ -6200,41 +6313,98 @@ static int render_thread(void *v)
 	return 0;
 }
 
+// RTG memory banks: use MEMORY_FUNCTIONS for the read/check/xlate halves but
+// provide custom put functions that also call mark_dirty(). Without this,
+// direct CPU writes to VRAM (software renderers, apps bypassing the P96 API)
+// are invisible to picasso_getwritewatch and the RTG display never updates.
+// On WinUAE-native Windows builds the write-watch is provided by the OS
+// (GetWriteWatch) and mark_dirty is not defined, so fall back to the stock
+// MEMORY_FUNCTIONS in that case.
+#ifndef _WIN32
+#define GFXMEM_PUT_FUNCTIONS(name, index) \
+static void REGPARAM3 name ## _lput (uaecptr, uae_u32) REGPARAM; \
+static void REGPARAM2 name ## _lput (uaecptr addr, uae_u32 l) \
+{ \
+	uae_u8 *m; \
+	addr -= name ## _bank.startaccessmask; \
+	addr &= name ## _bank.mask; \
+	m = name ## _bank.baseaddr + addr; \
+	do_put_mem_long ((uae_u32 *)m, l); \
+	mark_dirty((index), m, 4); \
+} \
+static void REGPARAM3 name ## _wput (uaecptr, uae_u32) REGPARAM; \
+static void REGPARAM2 name ## _wput (uaecptr addr, uae_u32 w) \
+{ \
+	uae_u8 *m; \
+	addr -= name ## _bank.startaccessmask; \
+	addr &= name ## _bank.mask; \
+	m = name ## _bank.baseaddr + addr; \
+	do_put_mem_word ((uae_u16 *)m, w); \
+	mark_dirty((index), m, 2); \
+} \
+static void REGPARAM3 name ## _bput (uaecptr, uae_u32) REGPARAM; \
+static void REGPARAM2 name ## _bput (uaecptr addr, uae_u32 b) \
+{ \
+	addr -= name ## _bank.startaccessmask; \
+	addr &= name ## _bank.mask; \
+	name ## _bank.baseaddr[addr] = b; \
+	mark_dirty((index), name ## _bank.baseaddr + addr, 1); \
+}
+
+#define GFXMEM_MEMORY_FUNCTIONS(name, index) \
+MEMORY_LGET(name); \
+MEMORY_WGET(name); \
+MEMORY_BGET(name); \
+GFXMEM_PUT_FUNCTIONS(name, index) \
+MEMORY_CHECK(name); \
+MEMORY_XLATE(name);
+
+// Force JIT to route writes through the bank's *_put handlers (by flagging
+// the bank as special for writes via S_WRITE) so mark_dirty() runs on every
+// CPU poke to VRAM. WinUAE relies on GetWriteWatch() for this instead.
+// Without S_WRITE, JIT blocks that write directly to natmem never mark the
+// touched pages dirty and picasso_flushpixels uploads nothing.
+#define GFXMEM_JIT_WRITE_FLAG S_WRITE
+#else
+#define GFXMEM_MEMORY_FUNCTIONS(name, index) MEMORY_FUNCTIONS(name)
+#define GFXMEM_JIT_WRITE_FLAG 0
+#endif
+
 extern addrbank gfxmem_bank;
-MEMORY_FUNCTIONS(gfxmem);
+GFXMEM_MEMORY_FUNCTIONS(gfxmem, 0)
 addrbank gfxmem_bank = {
 	gfxmem_lget, gfxmem_wget, gfxmem_bget,
 	gfxmem_lput, gfxmem_wput, gfxmem_bput,
 	gfxmem_xlate, gfxmem_check, nullptr, nullptr, _T("RTG RAM"),
 	dummy_lgeti, dummy_wgeti,
-	ABFLAG_RAM | ABFLAG_RTG | ABFLAG_DIRECTACCESS, 0, 0
+	ABFLAG_RAM | ABFLAG_RTG | ABFLAG_DIRECTACCESS, 0, GFXMEM_JIT_WRITE_FLAG
 };
 extern addrbank gfxmem2_bank;
-MEMORY_FUNCTIONS(gfxmem2);
+GFXMEM_MEMORY_FUNCTIONS(gfxmem2, 1)
 addrbank gfxmem2_bank = {
 	gfxmem2_lget, gfxmem2_wget, gfxmem2_bget,
 	gfxmem2_lput, gfxmem2_wput, gfxmem2_bput,
 	gfxmem2_xlate, gfxmem2_check, nullptr, nullptr, _T("RTG RAM #2"),
 	dummy_lgeti, dummy_wgeti,
-	ABFLAG_RAM | ABFLAG_RTG | ABFLAG_DIRECTACCESS, 0, 0
+	ABFLAG_RAM | ABFLAG_RTG | ABFLAG_DIRECTACCESS, 0, GFXMEM_JIT_WRITE_FLAG
 };
 extern addrbank gfxmem3_bank;
-MEMORY_FUNCTIONS(gfxmem3);
+GFXMEM_MEMORY_FUNCTIONS(gfxmem3, 2)
 addrbank gfxmem3_bank = {
 	gfxmem3_lget, gfxmem3_wget, gfxmem3_bget,
 	gfxmem3_lput, gfxmem3_wput, gfxmem3_bput,
 	gfxmem3_xlate, gfxmem3_check, nullptr, nullptr, _T("RTG RAM #3"),
 	dummy_lgeti, dummy_wgeti,
-	ABFLAG_RAM | ABFLAG_RTG | ABFLAG_DIRECTACCESS, 0, 0
+	ABFLAG_RAM | ABFLAG_RTG | ABFLAG_DIRECTACCESS, 0, GFXMEM_JIT_WRITE_FLAG
 };
 extern addrbank gfxmem4_bank;
-MEMORY_FUNCTIONS(gfxmem4);
+GFXMEM_MEMORY_FUNCTIONS(gfxmem4, 3)
 addrbank gfxmem4_bank = {
 	gfxmem4_lget, gfxmem4_wget, gfxmem4_bget,
 	gfxmem4_lput, gfxmem4_wput, gfxmem4_bput,
 	gfxmem4_xlate, gfxmem4_check, nullptr, nullptr, _T("RTG RAM #4"),
 	dummy_lgeti, dummy_wgeti,
-	ABFLAG_RAM | ABFLAG_RTG | ABFLAG_DIRECTACCESS, 0, 0
+	ABFLAG_RAM | ABFLAG_RTG | ABFLAG_DIRECTACCESS, 0, GFXMEM_JIT_WRITE_FLAG
 };
 addrbank *gfxmem_banks[MAX_RTG_BOARDS];
 

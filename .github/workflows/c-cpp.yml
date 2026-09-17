@@ -57,12 +57,28 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Cache ccache
+        uses: actions/cache@v5
+        with:
+          path: ~/.ccache
+          key: ${{ runner.os }}-debian-${{ matrix.name }}-amd64-ccache-${{ github.ref }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-debian-${{ matrix.name }}-amd64-ccache-${{ github.ref }}-
+            ${{ runner.os }}-debian-${{ matrix.name }}-amd64-ccache-
+
       - name: Run the build process with Docker
         run: |
-          docker run --rm -v "${{ github.workspace }}:/build" ${{ matrix.image }} \
+          docker run --rm \
+            -v "${{ github.workspace }}:/build" \
+            -v "$HOME/.ccache:/root/.ccache" \
+            -e CCACHE_DIR=/root/.ccache \
+            ${{ matrix.image }} \
             bash -euo pipefail -c '
-              cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+              command -v ccache >/dev/null 2>&1 || { apt-get update -qq; apt-get install -y -qq ccache; }
+              ccache --zero-stats >/dev/null || true
+              cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DDISTRO_CODENAME=${{ matrix.name }}
               cmake --build build -j"$(nproc)"
+              ccache --show-stats || true
               cpack -G DEB --config build/CPackConfig.cmake
             '
 
@@ -108,12 +124,28 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Cache ccache
+        uses: actions/cache@v5
+        with:
+          path: ~/.ccache
+          key: ${{ runner.os }}-debian-${{ matrix.name }}-arm64-ccache-${{ github.ref }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-debian-${{ matrix.name }}-arm64-ccache-${{ github.ref }}-
+            ${{ runner.os }}-debian-${{ matrix.name }}-arm64-ccache-
+
       - name: Run the build process with Docker
         run: |
-          docker run --rm -v "${{ github.workspace }}:/build" ${{ matrix.image }} \
+          docker run --rm \
+            -v "${{ github.workspace }}:/build" \
+            -v "$HOME/.ccache:/root/.ccache" \
+            -e CCACHE_DIR=/root/.ccache \
+            ${{ matrix.image }} \
             bash -euo pipefail -c '
-              cmake -DCMAKE_TOOLCHAIN_FILE=cmake/Toolchain-aarch64-linux-gnu.cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+              command -v ccache >/dev/null 2>&1 || { apt-get update -qq; apt-get install -y -qq ccache; }
+              ccache --zero-stats >/dev/null || true
+              cmake -DCMAKE_TOOLCHAIN_FILE=cmake/Toolchain-aarch64-linux-gnu.cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DDISTRO_CODENAME=${{ matrix.name }}
               cmake --build build -j"$(nproc)"
+              ccache --show-stats || true
               cpack -G DEB --config build/CPackConfig.cmake
             '
 
@@ -159,12 +191,28 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Cache ccache
+        uses: actions/cache@v5
+        with:
+          path: ~/.ccache
+          key: ${{ runner.os }}-debian-${{ matrix.name }}-armhf-ccache-${{ github.ref }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-debian-${{ matrix.name }}-armhf-ccache-${{ github.ref }}-
+            ${{ runner.os }}-debian-${{ matrix.name }}-armhf-ccache-
+
       - name: Run the build process with Docker
         run: |
-          docker run --rm -v "${{ github.workspace }}:/build" ${{ matrix.image }} \
+          docker run --rm \
+            -v "${{ github.workspace }}:/build" \
+            -v "$HOME/.ccache:/root/.ccache" \
+            -e CCACHE_DIR=/root/.ccache \
+            ${{ matrix.image }} \
             bash -euo pipefail -c '
-              cmake -DCMAKE_TOOLCHAIN_FILE=cmake/Toolchain-arm-linux-gnueabihf.cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+              command -v ccache >/dev/null 2>&1 || { apt-get update -qq; apt-get install -y -qq ccache; }
+              ccache --zero-stats >/dev/null || true
+              cmake -DCMAKE_TOOLCHAIN_FILE=cmake/Toolchain-arm-linux-gnueabihf.cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DDISTRO_CODENAME=${{ matrix.name }}
               cmake --build build -j"$(nproc)"
+              ccache --show-stats || true
               cpack -G DEB --config build/CPackConfig.cmake
             '
 
@@ -188,49 +236,399 @@ jobs:
           path: "amiberry-lite-*.zip"
           retention-days: 7
 
-  build-macos:
-    runs-on: macos-15
+  build-macOS:
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     permissions:
       contents: read
+      actions: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x86_64
+            runner: macos-15-intel
+            arch: intel
+            artifact_name: amiberry-lite-macOS-x86_64-intermediate
+          - name: Apple-Silicon
+            runner: macos-15
+            arch: apple-silicon
+            artifact_name: amiberry-lite-macOS-arm64-intermediate
     steps:
-      - uses: actions/checkout@v6
+      - name: Check out repository code
+        uses: actions/checkout@v6
+
+      - name: Cache Homebrew
+        if: matrix.arch == 'intel'
+        uses: actions/cache@v5
+        with:
+          path: /usr/local/Homebrew
+          key: ${{ runner.os }}-brew-${{ hashFiles('Brewfile') }}
+          restore-keys: |
+            ${{ runner.os }}-brew-
+
+      - name: Fix homebrew in Github Runner
+        if: matrix.arch == 'intel'
+        run: |
+          for f in $(find /usr/local/bin -type l -print); do \
+            (readlink $f | grep -q -s "/Library") && echo Removing "$f" && rm -f "$f"; \
+          done || exit 0
 
       - name: Install dependencies (Homebrew)
         run: |
           brew update
-          brew install sdl2 sdl2_image sdl2_ttf flac mpg123 libpng zstd libserialport portmidi enet libmpeg2 dylibbundler
+          # `brew bundle` installs formulae concurrently and can race the cmake
+          # lock; install the shared build dependency first, then retry the
+          # bundle once to ride out any transient lock contention.
+          brew install cmake || true
+          brew bundle || { sleep 10; brew bundle; }
 
-      - name: Build for macOS (Apple Silicon)
+      - name: Build for macOS (${{ matrix.name }})
         run: |
           cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local
           cmake --build build -j"$(sysctl -n hw.ncpu)"
 
-      - name: Package DMG
-        run: cpack -G DragNDrop --config build/CPackConfig.cmake
+      - name: Archive intermediate app bundle
+        run: |
+          tar -C build -czf Amiberry-Lite.app.tar.gz Amiberry-Lite.app
+
+      - name: Upload intermediate app bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: Amiberry-Lite.app.tar.gz
+          retention-days: 1
+
+  merge-macOS-universal:
+    needs: [build-macOS]
+    runs-on: macos-15
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v6
+
+      - name: Download x86_64 app bundle
+        uses: actions/download-artifact@v8
+        with:
+          name: amiberry-lite-macOS-x86_64-intermediate
+          path: x86_64-app
+
+      - name: Download arm64 app bundle
+        uses: actions/download-artifact@v8
+        with:
+          name: amiberry-lite-macOS-arm64-intermediate
+          path: arm64-app
+
+      - name: Extract downloaded app bundles
+        run: |
+          tar -xzf x86_64-app/Amiberry-Lite.app.tar.gz -C x86_64-app
+          tar -xzf arm64-app/Amiberry-Lite.app.tar.gz -C arm64-app
+
+      - name: Create Universal binary with lipo
+        run: |
+          # macOS ships bash 3.2 (GPLv2); install bash 5 for associative arrays
+          if [ "${BASH_VERSINFO[0]:-0}" -lt 4 ]; then
+            brew install bash
+            exec "$(brew --prefix)/bin/bash" --noprofile --norc -euo pipefail "$0" "$@"
+          fi
+          set -euo pipefail
+
+          mkdir -p universal-app/Amiberry-Lite.app
+
+          # Start with the arm64 app as the base (preserves bundle structure)
+          cp -R arm64-app/Amiberry-Lite.app/ universal-app/Amiberry-Lite.app/
+
+          # Merge the main executable
+          lipo -create \
+            x86_64-app/Amiberry-Lite.app/Contents/MacOS/Amiberry-Lite \
+            arm64-app/Amiberry-Lite.app/Contents/MacOS/Amiberry-Lite \
+            -output universal-app/Amiberry-Lite.app/Contents/MacOS/Amiberry-Lite
+          chmod +x universal-app/Amiberry-Lite.app/Contents/MacOS/Amiberry-Lite
+
+          # Helper: merge a single binary with lipo, skipping if already universal
+          merge_binary() {
+            local x86_file="$1" arm_file="$2" output="$3"
+            if [ ! -f "$x86_file" ] || [ ! -f "$arm_file" ]; then
+              return
+            fi
+            # If a file is already universal (e.g. capsimage builds fat), just copy it
+            local x86_archs arm_archs
+            x86_archs=$(lipo -info "$x86_file" 2>/dev/null | sed 's/.*: //')
+            arm_archs=$(lipo -info "$arm_file" 2>/dev/null | sed 's/.*: //')
+            if echo "$x86_archs" | grep -q "x86_64" && echo "$x86_archs" | grep -q "arm64"; then
+              echo "  Already universal: $(basename "$output") — copying as-is"
+              cp "$x86_file" "$output"
+            elif [ "$x86_archs" = "$arm_archs" ]; then
+              echo "  WARNING: same arch in both — copying x86 version: $(basename "$output")"
+              cp "$x86_file" "$output"
+            else
+              lipo -create "$x86_file" "$arm_file" -output "$output"
+            fi
+          }
+
+          # Helper: extract library stem from a versioned dylib filename
+          # For libs with -N in the name (e.g. libglib-2.0), strip only the last version component
+          # For all other libs, strip the entire trailing version
+          #   libavif.16.4.0.dylib     → libavif
+          #   libpng16.16.dylib        → libpng16
+          lib_stem() {
+            local name="${1%.dylib}"
+            if [[ "$name" =~ -[0-9] ]] && [[ "$name" =~ \.[0-9]+([.][0-9]+)*$ ]]; then
+              echo "${name%.*}"
+            else
+              echo "$name" | sed -E 's/\.[0-9]+(\.[0-9]+)*$//'
+            fi
+          }
+
+          X86_FW="x86_64-app/Amiberry-Lite.app/Contents/Frameworks"
+          ARM_FW="arm64-app/Amiberry-Lite.app/Contents/Frameworks"
+          UNI_FW="universal-app/Amiberry-Lite.app/Contents/Frameworks"
+
+          # Build stem → filename maps for both architectures
+          declare -A x86_stems arm_stems
+          if [ -d "$X86_FW" ]; then
+            for f in "$X86_FW"/*.dylib; do
+              [ -f "$f" ] || continue
+              name=$(basename "$f")
+              stem=$(lib_stem "$name")
+              x86_stems["$stem"]="$name"
+            done
+          fi
+          if [ -d "$ARM_FW" ]; then
+            for f in "$ARM_FW"/*.dylib; do
+              [ -f "$f" ] || continue
+              name=$(basename "$f")
+              stem=$(lib_stem "$name")
+              arm_stems["$stem"]="$name"
+            done
+          fi
+
+          # Parity check: warn about mismatches between architectures
+          echo "=== Checking dylib parity between x86_64 and arm64 builds ==="
+          had_mismatch=0
+          for stem in "${!arm_stems[@]}"; do
+            arm_name="${arm_stems[$stem]}"
+            x86_name="${x86_stems[$stem]:-}"
+            if [ -z "$x86_name" ]; then
+              echo "  WARNING: $arm_name exists only in arm64 build (no x86_64 equivalent)"
+              had_mismatch=1
+            elif [ "$arm_name" != "$x86_name" ]; then
+              echo "  WARNING: version mismatch for $stem: x86_64=$x86_name vs arm64=$arm_name"
+              had_mismatch=1
+            fi
+          done
+          for stem in "${!x86_stems[@]}"; do
+            if [ -z "${arm_stems[$stem]:-}" ]; then
+              echo "  WARNING: ${x86_stems[$stem]} exists only in x86_64 build (no arm64 equivalent)"
+              had_mismatch=1
+            fi
+          done
+          if [ "$had_mismatch" = "0" ]; then
+            echo "  All dylibs match between architectures"
+          fi
+
+          # Merge Frameworks dylibs using stem-aware matching
+          echo "=== Merging Frameworks dylibs ==="
+          declare -A merged_stems
+          all_stems=()
+          for stem in "${!arm_stems[@]}"; do all_stems+=("$stem"); done
+          for stem in "${!x86_stems[@]}"; do
+            if [ -z "${arm_stems[$stem]:-}" ]; then
+              all_stems+=("$stem")
+            fi
+          done
+
+          for stem in "${all_stems[@]}"; do
+            [ -n "${merged_stems[$stem]:-}" ] && continue
+            merged_stems["$stem"]=1
+
+            x86_name="${x86_stems[$stem]:-}"
+            arm_name="${arm_stems[$stem]:-}"
+
+            if [ -n "$x86_name" ] && [ -n "$arm_name" ]; then
+              if [ "$x86_name" = "$arm_name" ]; then
+                echo "  Merging: $arm_name"
+                merge_binary "$X86_FW/$x86_name" "$ARM_FW/$arm_name" "$UNI_FW/$arm_name"
+              else
+                # Version mismatch — merge by stem, provide both names
+                echo "  Merging with version mismatch: x86_64=$x86_name + arm64=$arm_name"
+                merge_binary "$X86_FW/$x86_name" "$ARM_FW/$arm_name" "$UNI_FW/$arm_name"
+                ln -sf "$arm_name" "$UNI_FW/$x86_name"
+                echo "    → Universal dylib: $arm_name, symlink: $x86_name → $arm_name"
+              fi
+            elif [ -n "$arm_name" ]; then
+              echo "  Keeping arm64-only: $arm_name (no x86_64 equivalent)"
+            elif [ -n "$x86_name" ]; then
+              echo "  Copying x86_64-only: $x86_name (not in arm64 base)"
+              cp "$X86_FW/$x86_name" "$UNI_FW/$x86_name"
+            fi
+          done
+
+          # Merge all dylibs in plugins (arm64 base + any x86-only plugins)
+          UNI_PLUGINS="universal-app/Amiberry-Lite.app/Contents/Resources/plugins"
+          X86_PLUGINS="x86_64-app/Amiberry-Lite.app/Contents/Resources/plugins"
+          ARM_PLUGINS="arm64-app/Amiberry-Lite.app/Contents/Resources/plugins"
+          if [ -d "$UNI_PLUGINS" ]; then
+            for dylib in "$UNI_PLUGINS"/*.dylib; do
+              [ -f "$dylib" ] || continue
+              bname=$(basename "$dylib")
+              merge_binary "$X86_PLUGINS/$bname" "$ARM_PLUGINS/$bname" "$dylib"
+            done
+          fi
+          if [ -d "$X86_PLUGINS" ]; then
+            for dylib in "$X86_PLUGINS"/*.dylib; do
+              [ -f "$dylib" ] || continue
+              bname=$(basename "$dylib")
+              if [ ! -f "$UNI_PLUGINS/$bname" ]; then
+                echo "  Copying x86_64-only plugin: $bname"
+                mkdir -p "$UNI_PLUGINS"
+                cp "$dylib" "$UNI_PLUGINS/$bname"
+              fi
+            done
+          fi
+
+          # Verify the main binary is universal
+          echo "=== Universal binary info ==="
+          lipo -info universal-app/Amiberry-Lite.app/Contents/MacOS/Amiberry-Lite
+          file universal-app/Amiberry-Lite.app/Contents/MacOS/Amiberry-Lite
+
+          # Verify all Frameworks dylibs are universal
+          echo "=== Verifying Frameworks dylibs ==="
+          non_universal=0
+          for dylib in "$UNI_FW"/*.dylib; do
+            [ -f "$dylib" ] || continue
+            # Skip symlinks — they point to an already-checked universal dylib
+            [ -L "$dylib" ] && continue
+            archs=$(lipo -info "$dylib" 2>/dev/null | sed 's/.*: //')
+            name=$(basename "$dylib")
+            if echo "$archs" | grep -q "x86_64" && echo "$archs" | grep -q "arm64"; then
+              echo "  OK: $name ($archs)"
+            else
+              echo "  WARNING: $name is NOT universal ($archs)"
+              non_universal=1
+            fi
+          done
+          if [ "$non_universal" = "1" ]; then
+            echo "::warning::Some Frameworks dylibs are not universal — the app may crash on one architecture"
+          fi
+
+          echo "=== Verifying dylib dependencies resolve ==="
+          missing_deps=0
+          MAIN_BIN="universal-app/Amiberry-Lite.app/Contents/MacOS/Amiberry-Lite"
+
+          check_framework_refs() {
+            local binary="$1"
+            local label="$2"
+            for arch in x86_64 arm64; do
+              if ! lipo "$binary" -verify_arch "$arch" >/dev/null 2>&1; then
+                continue
+              fi
+              while read -r line; do
+                dep_name=$(echo "$line" | sed -E 's|.*@executable_path/../Frameworks/([^ ]+).*|\1|')
+                if [ ! -f "$UNI_FW/$dep_name" ]; then
+                  echo "  MISSING ($arch, $label): $dep_name"
+                  missing_deps=1
+                fi
+              done < <(otool -arch "$arch" -L "$binary" 2>/dev/null | grep '@executable_path/../Frameworks/' || true)
+              if otool -arch "$arch" -L "$binary" 2>/dev/null | grep -E '/opt/homebrew|/usr/local'; then
+                echo "  EXTERNAL HOMEBREW DEPENDENCY ($arch, $label)"
+                missing_deps=1
+              fi
+            done
+          }
+
+          check_framework_refs "$MAIN_BIN" "Amiberry-Lite"
+          for dylib in "$UNI_PLUGINS"/*.dylib "$UNI_FW"/*.dylib; do
+            [ -f "$dylib" ] || continue
+            [ -L "$dylib" ] && continue
+            check_framework_refs "$dylib" "$(basename "$dylib")"
+          done
+          if [ "$missing_deps" = "1" ]; then
+            echo "::error::Some dylib references are unresolved or still point at Homebrew paths"
+            exit 1
+          fi
+
+      - name: Create DMG package
+        run: |
+          set -euo pipefail
+
+          # Read version from CMakeLists.txt (BSD-compatible, no grep -P)
+          VERSION=$(sed -n 's/.*VERSION \([0-9]*\.[0-9]*\.[0-9]*\).*/\1/p' CMakeLists.txt | head -1)
+          PRE_RELEASE=$(sed -n 's/.*VERSION_PRE_RELEASE "\([0-9]*\)".*/\1/p' CMakeLists.txt | head -1)
+          if [ -n "$PRE_RELEASE" ]; then
+            DMG_VERSION="${VERSION}~pre${PRE_RELEASE}"
+          else
+            DMG_VERSION="${VERSION}"
+          fi
+          DMG_NAME="Amiberry-Lite-${DMG_VERSION}-macOS-universal"
+
+          # Create a staging directory for DMG contents
+          STAGING="dmg-staging"
+          rm -rf "$STAGING"
+          mkdir -p "$STAGING"
+          cp -R universal-app/Amiberry-Lite.app "$STAGING/"
+          ln -s /Applications "$STAGING/Applications"
+
+          # Copy background image
+          mkdir -p "$STAGING/.background"
+          cp packaging/dmg/AppDMGBackground.tiff "$STAGING/.background/background.tiff"
+
+          # Create a writable DMG, apply Finder layout/background, then compress.
+          RW_DMG="${DMG_NAME}-rw.dmg"
+          hdiutil create -volname "Amiberry-Lite" \
+            -srcfolder "$STAGING" \
+            -ov -format UDRW \
+            "$RW_DMG"
+
+          DEVICE=""
+          cleanup() {
+            if [ -n "$DEVICE" ]; then
+              hdiutil detach "$DEVICE" || true
+            fi
+          }
+          trap cleanup EXIT
+
+          DEVICE=$(hdiutil attach -readwrite -noverify -noautoopen "$RW_DMG" | awk '/\/Volumes\/Amiberry-Lite/ {print $1; exit}')
+          if [ -z "$DEVICE" ]; then
+            echo "Failed to attach DMG."
+            exit 1
+          fi
+
+          osascript packaging/dmg/AppDMGSetup.scpt "Amiberry-Lite"
+          hdiutil detach "$DEVICE"
+          DEVICE=""
+          trap - EXIT
+
+          hdiutil convert "$RW_DMG" -format UDZO -imagekey zlib-level=9 -ov -o "${DMG_NAME}.dmg"
+          rm -f "$RW_DMG"
+          rm -rf "$STAGING"
+
+          echo "DMG_NAME=${DMG_NAME}" >> "$GITHUB_ENV"
 
       - name: Upload artifact
         if: always() && github.ref_type != 'tag'
         uses: actions/upload-artifact@v7
         with:
-          name: amiberry-lite-macos-arm64
+          name: amiberry-lite-macOS-universal
           path: "*.dmg"
           retention-days: 7
 
       - name: ZIP package for release
         if: github.ref_type == 'tag'
-        run: zip -j amiberry-lite-${{ github.ref_name }}-macos-arm64.zip ./*.dmg
+        run: zip -j amiberry-lite-${{ github.ref_name }}-macOS-universal.zip ./*.dmg
 
       - name: Upload artifact for release
         if: always() && github.ref_type == 'tag'
         uses: actions/upload-artifact@v7
         with:
-          name: amiberry-lite-macos-arm64
+          name: amiberry-lite-macOS-universal
           path: "amiberry-lite-*.zip"
           retention-days: 7
 
   create-release:
-    needs: [build-debian-amd64, build-debian-armhf, build-debian-arm64, build-macos]
+    needs: [build-debian-amd64, build-debian-armhf, build-debian-arm64, merge-macOS-universal]
     runs-on: ubuntu-24.04
     if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
     # Elevated permissions only where needed for creating a release
@@ -270,7 +668,7 @@ jobs:
             artifacts/amiberry-*.zip
 
   create-prerelease:
-    needs: [build-debian-amd64, build-debian-armhf, build-debian-arm64, build-macos]
+    needs: [build-debian-amd64, build-debian-armhf, build-debian-arm64, merge-macOS-universal]
     runs-on: ubuntu-24.04
     if: github.ref_type == 'tag' && startsWith(github.ref_name, 'preview-v')
     # Elevated permissions only where needed for creating a prerelease
@@ -299,13 +697,13 @@ jobs:
       - name: Display structure of downloaded files
         run: ls -R artifacts
 
-      - name: Create PreRelease
+      - name: Create Prerelease
         if: github.ref_type == 'tag'
         uses: ncipollo/release-action@v1
         with:
-          prerelease: true
           allowUpdates: true
           omitBodyDuringUpdate: true
+          prerelease: true
           body: ${{ steps.changelog.outputs.changes }}
           artifacts: |
             artifacts/amiberry-*.zip

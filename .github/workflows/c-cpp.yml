@@ -550,6 +550,24 @@ jobs:
             exit 1
           fi
 
+      - name: Re-sign the universal bundle (ad-hoc)
+        run: |
+          # lipo replaced the binaries covered by the build-time ad-hoc
+          # signature; re-sign nested code first, then the app, so the
+          # seal matches the merged contents.
+          for file in universal-app/Amiberry-Lite.app/Contents/Frameworks/*.dylib; do
+            [ -f "$file" ] || continue
+            [ -L "$file" ] && continue
+            codesign -s - -f "$file"
+          done
+          for file in universal-app/Amiberry-Lite.app/Contents/Resources/plugins/*.dylib; do
+            [ -f "$file" ] || continue
+            [ -L "$file" ] && continue
+            codesign -s - -f "$file"
+          done
+          codesign -s - -f universal-app/Amiberry-Lite.app
+          codesign --verify --deep --strict universal-app/Amiberry-Lite.app
+          echo "Ad-hoc signature verification passed"
       - name: Create DMG package
         run: |
           set -euo pipefail

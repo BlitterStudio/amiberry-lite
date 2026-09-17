@@ -65,6 +65,11 @@ if(WITH_PGO_GENERATE OR WITH_PGO_USE)
     endif()
 endif()
 
+# 32-bit ARM targets trap on unaligned accesses; keep strict alignment.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^arm")
+    list(APPEND AMIBERRY_COMPILE_OPTIONS "-mno-unaligned-access")
+endif ()
+
 # Tune default Linux aarch64 builds for the slowest supported board
 # (Raspberry Pi 4 / Cortex-A72). -mtune only affects instruction scheduling;
 # the ISA baseline stays generic armv8-a. Leave WITH_OPTIMIZE builds alone so
@@ -72,7 +77,13 @@ endif()
 if(AMIBERRY_GNU_LIKE_COMPILER
         AND CMAKE_SYSTEM_NAME STREQUAL "Linux"
         AND ARCH_LOWER MATCHES "aarch64|arm64")
-    list(APPEND AMIBERRY_COMPILE_OPTIONS "-mtune=cortex-a72")
+    set(AMIBERRY_ARM_TUNE "cortex-a72" CACHE STRING "CPU passed to -mtune for Linux aarch64 builds (set empty to disable)")
+    if(WITH_OPTIMIZE)
+        message(STATUS "Linux aarch64: WITH_OPTIMIZE enabled, not applying default -mtune=${AMIBERRY_ARM_TUNE}")
+    elseif(AMIBERRY_ARM_TUNE)
+        list(APPEND AMIBERRY_COMPILE_OPTIONS "-mtune=${AMIBERRY_ARM_TUNE}")
+        message(STATUS "Linux aarch64: adding -mtune=${AMIBERRY_ARM_TUNE}")
+    endif()
 endif()
 
 if(AMIBERRY_GNU_LIKE_COMPILER)

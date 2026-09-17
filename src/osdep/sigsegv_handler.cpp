@@ -36,10 +36,13 @@
 #endif
 #include "uae.h"
 
-#if !defined(__MACH__) && !defined(CPU_AMD64) && !defined(__x86_64__) && !defined(__riscv)
+#if !defined(__MACH__) && !defined(CPU_AMD64) && !defined(__x86_64__) && !defined(__riscv) && !defined(__FreeBSD__)
 #include <asm/sigcontext.h>
 #else
 #include <sys/ucontext.h>
+#endif
+#if defined(__FreeBSD__) && defined(CPU_AARCH64)
+#include <machine/ucontext.h>
 #endif
 #include <csignal>
 #include <dlfcn.h>
@@ -135,7 +138,11 @@ static int handle_exception(mcontext_t sigcont, long fault_addr)
 	int handled = HANDLE_EXCEPTION_NONE;
 // Mac OS X struct for this is different
 #ifndef __MACH__
+#if defined(__FreeBSD__) && defined(CPU_AARCH64)
+	auto fault_pc = static_cast<uintptr>(sigcont->mc_gpregs.gp_elr);
+#else
 	auto fault_pc = static_cast<uintptr>(sigcont->pc);
+#endif
 #else
 	auto fault_pc = static_cast<uintptr>(sigcont->__ss.__pc);
 #endif
@@ -177,7 +184,11 @@ static int handle_exception(mcontext_t sigcont, long fault_addr)
 		if (a3000lmem_bank.allocated_size > 0 && amiga_addr >= a3000lmem_bank.start - 0x00100000 && amiga_addr < a3000lmem_bank.start - 0x00100000 + 8) {
 			output_log(_T("  Stupid kickstart detection for size of ramsey_low at 0x%08lx.\n"), amiga_addr);
 #ifndef __MACH__
-			sigcont->pc += 4;
+			#if defined(__FreeBSD__) && defined(CPU_AARCH64)
+		sigcont->mc_gpregs.gp_elr += 4;
+#else
+		sigcont->pc += 4;
+#endif
 #else
 			sigcont->__ss.__pc += 4;
 #endif
@@ -189,7 +200,11 @@ static int handle_exception(mcontext_t sigcont, long fault_addr)
 		if (a3000hmem_bank.allocated_size > 0 && amiga_addr >= a3000hmem_bank.start + a3000hmem_bank.allocated_size && amiga_addr < a3000hmem_bank.start + a3000hmem_bank.allocated_size + 8) {
 			output_log(_T("  Stupid kickstart detection for size of ramsey_high at 0x%08lx.\n"), amiga_addr);
 #ifndef __MACH__
-			sigcont->pc += 4;
+			#if defined(__FreeBSD__) && defined(CPU_AARCH64)
+		sigcont->mc_gpregs.gp_elr += 4;
+#else
+		sigcont->pc += 4;
+#endif
 #else
 			sigcont->__ss.__pc += 4;
 #endif
@@ -328,7 +343,11 @@ static int handle_exception(mcontext_t sigcont, long fault_addr)
 
 			// Go to next instruction
 #ifndef __MACH__
-			sigcont->pc += 4;
+			#if defined(__FreeBSD__) && defined(CPU_AARCH64)
+		sigcont->mc_gpregs.gp_elr += 4;
+#else
+		sigcont->pc += 4;
+#endif
 #else
 			sigcont->__ss.__pc += 4;
 #endif
@@ -364,7 +383,11 @@ void signal_segv(int signum, siginfo_t* info, void* ptr)
 
 #ifndef __MACH__
 	mcontext_t* context = &(ucontext->uc_mcontext);
+#if defined(__FreeBSD__) && defined(CPU_AARCH64)
+	unsigned long long* regs = reinterpret_cast<unsigned long long*>(context->mc_gpregs.gp_x);
+#else
 	unsigned long long* regs = context->regs;
+#endif
 #else
 	mcontext_t context = ucontext->uc_mcontext;
 	unsigned long long* regs = context->__ss.__x;
@@ -389,12 +412,20 @@ void signal_segv(int signum, siginfo_t* info, void* ptr)
 			output_log(_T("       value = 0x%08x\n"), *static_cast<uae_u32*>(info->si_addr));
 
 		for (int i = 0; i < 31; ++i)
-#ifndef __MACH__
+#if defined(__FreeBSD__) && defined(CPU_AARCH64)
+			output_log(_T("x%02d  = 0x%016llx\n"), i, ucontext->uc_mcontext.mc_gpregs.gp_x[i]);
+#elif !defined(__MACH__)
 			output_log(_T("x%02d  = 0x%016llx\n"), i, ucontext->uc_mcontext.regs[i]);
 #else
 			output_log(_T("x%02d  = 0x%016llx\n"), i, context->__ss.__x[i]);
 #endif
-#ifndef __MACH__
+#if defined(__FreeBSD__) && defined(CPU_AARCH64)
+		output_log(_T("SP  = 0x%016llx\n"), ucontext->uc_mcontext.mc_gpregs.gp_sp);
+		output_log(_T("PC  = 0x%016llx\n"), ucontext->uc_mcontext.mc_gpregs.gp_elr);
+		output_log(_T("Fault Address = 0x%016llx\n"), static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(info->si_addr)));
+		output_log(_T("SPSR  = 0x%016llx\n"), static_cast<unsigned long long>(ucontext->uc_mcontext.mc_gpregs.gp_spsr));
+		void* getaddr = reinterpret_cast<void*>(ucontext->uc_mcontext.mc_gpregs.gp_lr);
+#elif !defined(__MACH__)
 		output_log(_T("SP  = 0x%016llx\n"), ucontext->uc_mcontext.sp);
 		output_log(_T("PC  = 0x%016llx\n"), ucontext->uc_mcontext.pc);
 		output_log(_T("Fault Address = 0x%016llx\n"), ucontext->uc_mcontext.fault_address);
@@ -475,7 +506,11 @@ void signal_buserror(int signum, siginfo_t* info, void* ptr)
 
 #ifndef __MACH__
 	mcontext_t* context = &(ucontext->uc_mcontext);
+#if defined(__FreeBSD__) && defined(CPU_AARCH64)
+	unsigned long long* regs = reinterpret_cast<unsigned long long*>(context->mc_gpregs.gp_x);
+#else
 	unsigned long long* regs = context->regs;
+#endif
 #else
 	mcontext_t context = ucontext->uc_mcontext;
 	unsigned long long* regs = context->__ss.__x;
@@ -491,7 +526,15 @@ void signal_buserror(int signum, siginfo_t* info, void* ptr)
 		output_log(_T("       value = 0x%08x\n"), *static_cast<uae_u32*>(info->si_addr));
 
 	for (int i = 0; i < 31; ++i)
-#ifndef __MACH__
+#if defined(__FreeBSD__) && defined(CPU_AARCH64)
+		output_log(_T("x%02d  = 0x%016llx\n"), i, ucontext->uc_mcontext.mc_gpregs.gp_x[i]);
+	output_log(_T("SP  = 0x%016llx\n"), ucontext->uc_mcontext.mc_gpregs.gp_sp);
+	output_log(_T("PC  = 0x%016llx\n"), ucontext->uc_mcontext.mc_gpregs.gp_elr);
+	output_log(_T("Fault Address = 0x%016llx\n"), static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(info->si_addr)));
+	output_log(_T("SPSR  = 0x%016llx\n"), static_cast<unsigned long long>(ucontext->uc_mcontext.mc_gpregs.gp_spsr));
+
+	void* getaddr = reinterpret_cast<void*>(ucontext->uc_mcontext.mc_gpregs.gp_lr);
+#elif !defined(__MACH__)
 		output_log(_T("x%02d  = 0x%016llx\n"), i, ucontext->uc_mcontext.regs[i]);
 	output_log(_T("SP  = 0x%016llx\n"), ucontext->uc_mcontext.sp);
 	output_log(_T("PC  = 0x%016llx\n"), ucontext->uc_mcontext.pc);

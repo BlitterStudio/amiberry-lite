@@ -25,9 +25,11 @@ find_package(SDL2 CONFIG REQUIRED)
 find_package(SDL2_image MODULE REQUIRED)
 find_package(SDL2_ttf MODULE REQUIRED)
 find_package(FLAC REQUIRED)
-find_package(mpg123 REQUIRED)
 find_package(PNG REQUIRED)
-find_package(ZLIB REQUIRED)
+if(USE_MPG123)
+    find_package(mpg123 REQUIRED)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_MPG123)
+endif()
 
 if (USE_ZSTD)
     target_compile_definitions(${PROJECT_NAME} PRIVATE USE_ZSTD)
@@ -115,9 +117,13 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         guisan
         mt32emu
 )
-
-if (NOT WIN32)
-    target_link_libraries(${PROJECT_NAME} PRIVATE pthread dl)
+# mpg123 is optional at build time (HAVE_MPG123 guards the decoder).
+if(USE_MPG123)
+    if(TARGET MPG123::libmpg123)
+        target_link_libraries(${PROJECT_NAME} PRIVATE MPG123::libmpg123)
+    elseif(MPG123_FOUND)
+        target_link_libraries(${PROJECT_NAME} PRIVATE ${MPG123_LIBRARIES})
+    endif()
 endif()
 
 if(TARGET FLAC::FLAC)
@@ -138,12 +144,6 @@ elseif(PNG_FOUND)
     target_link_libraries(${PROJECT_NAME} PRIVATE ${PNG_LIBRARIES})
 endif()
 
-# mpg123 is unconditionally required (no runtime fallback in the sources).
-if(TARGET MPG123::libmpg123)
-    target_link_libraries(${PROJECT_NAME} PRIVATE MPG123::libmpg123)
-elseif(MPG123_FOUND)
-    target_link_libraries(${PROJECT_NAME} PRIVATE ${MPG123_LIBRARIES})
-endif()
 
 if(TARGET libzstd_static)
     target_link_libraries(${PROJECT_NAME} PRIVATE libzstd_static)

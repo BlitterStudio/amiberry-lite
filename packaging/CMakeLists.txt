@@ -72,7 +72,10 @@ else()
 endif()
 
 # Linux DEB settings - build dependency list conditionally based on enabled features
-set(_deb_deps "libc6, libstdc++6, libsdl2-2.0-0, libsdl2-image-2.0-0, libsdl2-ttf-2.0-0, flac, libmpg123-0, libpng16-16, zlib1g")
+set(_deb_deps "libc6, libstdc++6, libsdl2-2.0-0, libsdl2-image-2.0-0, libsdl2-ttf-2.0-0, flac, libpng16-16, zlib1g")
+if(USE_MPG123)
+    string(APPEND _deb_deps ", libmpg123-0")
+endif()
 if(USE_ZSTD)
     string(APPEND _deb_deps ", libzstd1")
 endif()
@@ -111,15 +114,16 @@ if(_deb_shlib_private_dirs)
     list(REMOVE_DUPLICATES _deb_shlib_private_dirs)
     list(JOIN _deb_shlib_private_dirs ";" CPACK_DEBIAN_PACKAGE_SHLIBDEPS_PRIVATE_DIRS)
 endif()
-set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "${_deb_arch}")
-set(CPACK_DEBIAN_PACKAGE_SECTION "otherosfs")
 set(CPACK_DEBIAN_PACKAGE_HOMEPAGE "https://amiberry.com")
 set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
         "${CMAKE_SOURCE_DIR}/packaging/linux/scripts/postinst"
         "${CMAKE_SOURCE_DIR}/packaging/linux/scripts/postrm")
 
 # Linux RPM settings - build dependency list conditionally based on enabled features
-set(_rpm_deps "glibc, libstdc++, SDL2, SDL2_ttf, SDL2_image, flac, mpg123, libpng, zlib")
+set(_rpm_deps "glibc, libstdc++, SDL2, SDL2_ttf, SDL2_image, flac, libpng, zlib")
+if(USE_MPG123)
+    string(APPEND _rpm_deps ", mpg123")
+endif()
 if(USE_ZSTD)
     string(APPEND _rpm_deps ", zstd")
 endif()

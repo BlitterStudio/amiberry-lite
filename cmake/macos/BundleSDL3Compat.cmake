@@ -48,6 +48,15 @@ if(NOT copy_result EQUAL 0)
     message(WARNING "failed to copy ${SDL3_LIBRARY} into ${BUNDLE_DIR}")
     return()
 endif()
+
+# Re-point the dylib's install ID at the bundle so otool -L no longer
+# references the Homebrew prefix it was copied from.
+execute_process(
+    COMMAND install_name_tool -id @rpath/libSDL3.dylib "${BUNDLE_DIR}/libSDL3.dylib"
+    RESULT_VARIABLE id_result)
+if(NOT id_result EQUAL 0)
+    message(WARNING "failed to set install name for bundled libSDL3.dylib")
+endif()
 execute_process(
     COMMAND codesign --force --sign - "${BUNDLE_DIR}/libSDL3.dylib"
     RESULT_VARIABLE codesign_result)

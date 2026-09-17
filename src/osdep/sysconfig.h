@@ -629,8 +629,8 @@ typedef char TCHAR;
 #define _tzset()            tzset()
 #define _timezone           timezone
 #define _daylight           daylight
-// Ftello and fseeko on OSX are alerady 64bit
-#if defined ANDROID || defined __MACH__
+// Ftello and fseeko on OSX and the BSDs are already 64bit
+#if defined(ANDROID) || defined(__ANDROID__) || defined(__MACH__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__HAIKU__)
 #define _ftelli64(x)        ftello(x)
 #define _fseeki64(x,y,z)    fseeko(x,y,z)
 #else

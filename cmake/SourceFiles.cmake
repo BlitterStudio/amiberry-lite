@@ -419,7 +419,10 @@ if (CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64" OR CMAKE_SYSTEM_PROCESSOR MATCHES "
             src/jit/compemu_fpp.cpp
             src/jit/compemu_support.cpp
     )
-    if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # aarch64_helper.s is ELF arm64 assembly with Linux-symbol conventions;
+    # it applies to every ELF platform (Linux, FreeBSD), but not Mach-O
+    # (macOS prefixes symbols with an underscore).
+    if (NOT CMAKE_SYSTEM_NAME MATCHES "Darwin")
         target_sources(${PROJECT_NAME} PRIVATE src/osdep/aarch64_helper.s)
     endif ()
 elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "arm")

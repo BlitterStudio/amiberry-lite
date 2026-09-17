@@ -117,6 +117,10 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         guisan
         mt32emu
 )
+
+if (NOT WIN32)
+    target_link_libraries(${PROJECT_NAME} PRIVATE pthread dl)
+endif()
 # mpg123 is optional at build time (HAVE_MPG123 guards the decoder).
 if(USE_MPG123)
     if(TARGET MPG123::libmpg123)

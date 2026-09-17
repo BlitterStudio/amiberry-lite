@@ -103,8 +103,10 @@ set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
 set(_deb_shlib_private_dirs "")
 foreach(_sdl_dir IN ITEMS "${SDL2_DIR}" "${SDL2_IMAGE_DIR}")
     if(_sdl_dir)
-        cmake_path(GET _sdl_dir PARENT_PATH _sdl_cmake_dir)
-        cmake_path(GET _sdl_cmake_dir PARENT_PATH _sdl_lib_dir)
+        # get_filename_component instead of cmake_path: Debian bullseye
+        # ships CMake 3.18, where cmake_path does not exist.
+        get_filename_component(_sdl_lib_dir "${_sdl_dir}" DIRECTORY)
+        get_filename_component(_sdl_lib_dir "${_sdl_lib_dir}" DIRECTORY)
         if(EXISTS "${_sdl_lib_dir}")
             list(APPEND _deb_shlib_private_dirs "${_sdl_lib_dir}")
         endif()

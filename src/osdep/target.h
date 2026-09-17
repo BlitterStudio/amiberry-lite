@@ -20,16 +20,15 @@
 #define GETBDM(x) (((x) - (((x) / 10000) * 10000)) / 100)
 #define GETBDD(x) ((x) % 100)
 
-#define AMIBERRYPUBLICBETA 1
+// Version/beta/date all come from CMake compile definitions
+#define AMIBERRYBETA _T(AMIBERRY_VERSION_PRE_RELEASE)
+#define AMIBERRYPUBLICBETA AMIBERRY_IS_PRE_RELEASE
 
-#if AMIBERRYPUBLICBETA
-#define AMIBERRYBETA _T("2")
-#else
-#define AMIBERRYBETA _T("")
-#endif
+#define AMIBERRYDATE MAKEBD(AMIBERRY_BUILD_YEAR, AMIBERRY_BUILD_MONTH, AMIBERRY_BUILD_DAY)
 
-#define AMIBERRYDATE MAKEBD(2025, 12, 26)
-#define COPYRIGHT _T("Copyright (C) 2025 Dimitris Panokostas")
+#define _AMIBERRY_STRINGIFY(x) #x
+#define _AMIBERRY_TOSTRING(x) _AMIBERRY_STRINGIFY(x)
+#define COPYRIGHT _T("Copyright (C) " _AMIBERRY_TOSTRING(AMIBERRY_BUILD_YEAR) " Dimitris Panokostas")
 
 #ifndef AMIBERRYEXTRA
 #define AMIBERRYEXTRA _T("")

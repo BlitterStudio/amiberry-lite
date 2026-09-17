@@ -349,30 +349,66 @@ else ()
     message(STATUS "PCem support disabled")
 endif ()
 
+set(AMIBERRY_OUTPUT_NAME "${PROJECT_NAME}")
+if(CMAKE_SYSTEM_NAME MATCHES "Darwin")
+    set(AMIBERRY_OUTPUT_NAME "${AMIBERRY_DISPLAY_NAME}")
+endif()
+
 add_executable(${PROJECT_NAME} MACOSX_BUNDLE ${SOURCE_FILES})
 
+if(VERSION_PRE_RELEASE)
+    set(AMIBERRY_IS_PRE_RELEASE 1)
+else()
+    set(AMIBERRY_IS_PRE_RELEASE 0)
+endif()
+
+# Build date components (configure-time wall-clock timestamp)
+# Temporarily unset SOURCE_DATE_EPOCH so string(TIMESTAMP) returns the
+# real build date. Flatpak-builder sets this for reproducible builds,
+# which since CMake 3.24 causes string(TIMESTAMP) to return the epoch
+# date instead of the current date (see amiberry issue #1854).
+set(_sde_backup "$ENV{SOURCE_DATE_EPOCH}")
+unset(ENV{SOURCE_DATE_EPOCH})
+string(TIMESTAMP AMIBERRY_BUILD_YEAR "%Y")
+string(TIMESTAMP AMIBERRY_BUILD_MONTH "%m")
+string(TIMESTAMP AMIBERRY_BUILD_DAY "%d")
+if(NOT "${_sde_backup}" STREQUAL "")
+    set(ENV{SOURCE_DATE_EPOCH} "${_sde_backup}")
+endif()
+# Remove leading zeros for C integer literals
+math(EXPR AMIBERRY_BUILD_MONTH_INT "${AMIBERRY_BUILD_MONTH}")
+math(EXPR AMIBERRY_BUILD_DAY_INT "${AMIBERRY_BUILD_DAY}")
+
 set_target_properties(${PROJECT_NAME} PROPERTIES
+        OUTPUT_NAME "${AMIBERRY_OUTPUT_NAME}"
         MACOSX_BUNDLE TRUE
-        MACOSX_BUNDLE_EXECUTABLE_NAME "Amiberry-Lite"
-        MACOSX_BUNDLE_INFO_STRING "${PROJECT_NAME} ${PROJECT_VERSION}"
+        MACOSX_BUNDLE_EXECUTABLE_NAME "${AMIBERRY_DISPLAY_NAME}"
+        MACOSX_BUNDLE_INFO_STRING "${AMIBERRY_DISPLAY_NAME} ${AMIBERRY_PRODUCT_VERSION}"
         MACOSX_BUNDLE_ICON_FILE "data/icon"
         MACOSX_BUNDLE_GUI_IDENTIFIER "com.blitterstudio.Amiberry-Lite"
         XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.blitterstudio.Amiberry-Lite"
-        MACOSX_BUNDLE_LONG_VERSION_STRING ${PROJECT_VERSION}
-        MACOSX_BUNDLE_BUNDLE_NAME "Amiberry-Lite"
+        MACOSX_BUNDLE_LONG_VERSION_STRING ${AMIBERRY_PRODUCT_VERSION}
+        MACOSX_BUNDLE_BUNDLE_NAME "${AMIBERRY_DISPLAY_NAME}"
         MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION}
         MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
-        MACOSX_BUNDLE_COPYRIGHT "(c) 2025 Dimitris Panokostas"
+        MACOSX_BUNDLE_COPYRIGHT "(c) ${AMIBERRY_BUILD_YEAR} Dimitris Panokostas"
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/packaging/MacOSXBundleInfo.plist.in"
 )
 
-
 target_compile_definitions(${PROJECT_NAME} PRIVATE
         _FILE_OFFSET_BITS=64
-        -DAMIBERRY_VERSION="${PROJECT_VERSION}"
-        -DAMIBERRY_VERSION_PRE_RELEASE="${VERSION_PRE_RELEASE}"
-        -DAMIBERRY_DATADIR="${CMAKE_INSTALL_FULL_DATADIR}/${PROJECT_NAME}"
-        -DAMIBERRY_LIBDIR="${CMAKE_INSTALL_FULL_LIBDIR}/${PROJECT_NAME}"
+        AMIBERRY_VERSION="${AMIBERRY_PRODUCT_VERSION}"
+        AMIBERRY_VERSION_PRE_RELEASE="${VERSION_PRE_RELEASE}"
+        AMIBERRY_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
+        AMIBERRY_VERSION_MINOR=${PROJECT_VERSION_MINOR}
+        AMIBERRY_VERSION_PATCH=${PROJECT_VERSION_PATCH}
+        AMIBERRY_IS_PRE_RELEASE=${AMIBERRY_IS_PRE_RELEASE}
+        AMIBERRY_BUILD_YEAR=${AMIBERRY_BUILD_YEAR}
+        AMIBERRY_BUILD_MONTH=${AMIBERRY_BUILD_MONTH_INT}
+        AMIBERRY_BUILD_DAY=${AMIBERRY_BUILD_DAY_INT}
+        AMIBERRY_BUILD_DATE="${AMIBERRY_BUILD_YEAR}-${AMIBERRY_BUILD_MONTH}-${AMIBERRY_BUILD_DAY}"
+        AMIBERRY_DATADIR="${CMAKE_INSTALL_FULL_DATADIR}/${PROJECT_NAME}"
+        AMIBERRY_LIBDIR="${CMAKE_INSTALL_FULL_LIBDIR}/${PROJECT_NAME}"
 )
 
 if (CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64" OR CMAKE_SYSTEM_PROCESSOR MATCHES "arm64")
@@ -400,6 +436,9 @@ elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "arm")
     )
 endif ()
 
+# The 68K JIT recompiler (ARM/AArch64 only in this codebase) allocates its
+# code buffers with absolute addressing assumptions; keep the executable
+# non-PIE so the JIT stays reliable on every supported platform.
 target_compile_options(${PROJECT_NAME} PRIVATE -fno-pie)
 target_link_options(${PROJECT_NAME} PRIVATE -no-pie)
 
@@ -411,15 +450,15 @@ if(AMIBERRY_LINK_OPTIONS)
     target_link_options(${PROJECT_NAME} PRIVATE ${AMIBERRY_LINK_OPTIONS})
 endif()
 
-# Apply platform-specific include/link paths from StandardProjectSettings.cmake
+# Apply platform-specific include/link paths from StandardProjectSettings.cmake.
+# AMIBERRY_PLATFORM_LIBS are linked in Dependencies.cmake after all library
+# dependencies, so platform system libraries come after static libs that
+# depend on them (enet, etc.).
 if(AMIBERRY_PLATFORM_INCLUDE_DIRS)
     target_include_directories(${PROJECT_NAME} PRIVATE ${AMIBERRY_PLATFORM_INCLUDE_DIRS})
 endif()
 if(AMIBERRY_PLATFORM_LINK_DIRS)
     target_link_directories(${PROJECT_NAME} PRIVATE ${AMIBERRY_PLATFORM_LINK_DIRS})
-endif()
-if(AMIBERRY_PLATFORM_LIBS)
-    target_link_libraries(${PROJECT_NAME} PRIVATE ${AMIBERRY_PLATFORM_LIBS})
 endif()
 
 target_include_directories(${PROJECT_NAME} PRIVATE
@@ -446,9 +485,3 @@ install(TARGETS ${PROJECT_NAME}
         ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
 )
 
-# Settings for installing per platform
-if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    include(cmake/linux/CMakeLists.txt)
-elseif (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-    include(cmake/macos/CMakeLists.txt)
-endif ()

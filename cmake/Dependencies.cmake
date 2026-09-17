@@ -18,7 +18,7 @@ if (USE_OPENGL)
     target_compile_definitions(${PROJECT_NAME} PRIVATE USE_OPENGL)
     find_package(OpenGL REQUIRED)
     find_package(GLEW REQUIRED)
-    target_link_libraries(${PROJECT_NAME} PRIVATE ${TARGET_LINK_LIBRARIES} GLEW OpenGL::GL)
+    target_link_libraries(${PROJECT_NAME} PRIVATE GLEW OpenGL::GL)
 endif ()
 
 find_package(SDL2 CONFIG REQUIRED)
@@ -33,7 +33,7 @@ if (USE_ZSTD)
     target_compile_definitions(${PROJECT_NAME} PRIVATE USE_ZSTD)
     find_helper(ZSTD libzstd zstd.h zstd)
     if(NOT ZSTD_FOUND)
-        message(WARNING "ZSTD library not found - CHD compressed disk images will not be supported")
+        message(STATUS "ZSTD library not found - CHD compressed disk images will not be supported")
     else()
         target_include_directories(${PROJECT_NAME} PRIVATE ${ZSTD_INCLUDE_DIRS})
         target_link_libraries(${PROJECT_NAME} PRIVATE ${ZSTD_LIBRARIES})
@@ -43,13 +43,21 @@ endif ()
 if (USE_LIBSERIALPORT)
     target_compile_definitions(${PROJECT_NAME} PRIVATE USE_LIBSERIALPORT)
     find_helper(LIBSERIALPORT libserialport libserialport.h serialport)
-    target_link_libraries(${PROJECT_NAME} PRIVATE ${LIBSERIALPORT_LIBRARIES})
+    if(LIBSERIALPORT_FOUND AND LIBSERIALPORT_LIBRARIES)
+        target_link_libraries(${PROJECT_NAME} PRIVATE ${LIBSERIALPORT_LIBRARIES})
+    else()
+        message(STATUS "LibSerialPort enabled but library was not found")
+    endif()
 endif ()
 
 if (USE_PORTMIDI)
     target_compile_definitions(${PROJECT_NAME} PRIVATE USE_PORTMIDI)
     find_helper(PORTMIDI portmidi portmidi.h portmidi)
-    target_link_libraries(${PROJECT_NAME} PRIVATE ${PORTMIDI_LIBRARIES})
+    if(PORTMIDI_FOUND AND PORTMIDI_LIBRARIES)
+        target_link_libraries(${PROJECT_NAME} PRIVATE ${PORTMIDI_LIBRARIES})
+    else()
+        message(STATUS "PortMidi enabled but library was not found")
+    endif()
 endif ()
 
 if (USE_LIBMPEG2)
@@ -63,7 +71,7 @@ if (USE_LIBENET)
     target_compile_definitions(${PROJECT_NAME} PRIVATE USE_LIBENET)
     find_helper(LIBENET libenet enet/enet.h enet)
     if(NOT LIBENET_FOUND)
-        message(WARNING "LibENET library not found - network emulation will not be supported")
+        message(STATUS "LibENET library not found - network emulation will not be supported")
     else()
         target_include_directories(${PROJECT_NAME} PRIVATE ${LIBENET_INCLUDE_DIRS})
         target_link_libraries(${PROJECT_NAME} PRIVATE ${LIBENET_LIBRARIES})
@@ -88,6 +96,8 @@ if (USE_UAENET_PCAP)
     endif()
 endif()
 
+# SDL2 include dirs: propagate them to the amiberry-lite target explicitly,
+# since the SDL2_image/SDL2_ttf MODULE finders only expose variables.
 get_target_property(SDL2_INCLUDE_DIRS SDL2::SDL2 INTERFACE_INCLUDE_DIRECTORIES)
 target_include_directories(${PROJECT_NAME} PRIVATE ${SDL2_INCLUDE_DIRS} ${SDL2_IMAGE_INCLUDE_DIR} ${SDL2_TTF_INCLUDE_DIR})
 
@@ -99,24 +109,79 @@ add_subdirectory(external/libguisan)
 
 target_include_directories(guisan PRIVATE ${SDL2_INCLUDE_DIRS} ${SDL2_IMAGE_INCLUDE_DIR} ${SDL2_TTF_INCLUDE_DIR})
 
+# Direct target linking preserves transitive includes and compile definitions.
+# SDL2, SDL2_ttf and SDL2_image are linked transitively through guisan.
 target_link_libraries(${PROJECT_NAME} PRIVATE
         guisan
         mt32emu
-        FLAC
-        png
-        MPG123::libmpg123
-        z
-        pthread
-        dl
 )
 
-if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+if (NOT WIN32)
+    target_link_libraries(${PROJECT_NAME} PRIVATE pthread dl)
+endif()
+
+if(TARGET FLAC::FLAC)
+    target_link_libraries(${PROJECT_NAME} PRIVATE FLAC::FLAC)
+elseif(TARGET FLAC)
+    target_link_libraries(${PROJECT_NAME} PRIVATE FLAC)
+elseif(FLAC_FOUND)
+    target_link_libraries(${PROJECT_NAME} PRIVATE ${FLAC_LIBRARIES})
+endif()
+
+if(TARGET PNG::PNG)
+    target_link_libraries(${PROJECT_NAME} PRIVATE PNG::PNG)
+elseif(TARGET png_static)
+    target_link_libraries(${PROJECT_NAME} PRIVATE png_static)
+elseif(TARGET png)
+    target_link_libraries(${PROJECT_NAME} PRIVATE png)
+elseif(PNG_FOUND)
+    target_link_libraries(${PROJECT_NAME} PRIVATE ${PNG_LIBRARIES})
+endif()
+
+# mpg123 is unconditionally required (no runtime fallback in the sources).
+if(TARGET MPG123::libmpg123)
+    target_link_libraries(${PROJECT_NAME} PRIVATE MPG123::libmpg123)
+elseif(MPG123_FOUND)
+    target_link_libraries(${PROJECT_NAME} PRIVATE ${MPG123_LIBRARIES})
+endif()
+
+if(TARGET libzstd_static)
+    target_link_libraries(${PROJECT_NAME} PRIVATE libzstd_static)
+elseif(TARGET zstd)
+    target_link_libraries(${PROJECT_NAME} PRIVATE zstd)
+elseif(ZSTD_FOUND)
+    target_link_libraries(${PROJECT_NAME} PRIVATE ${ZSTD_LIBRARIES})
+endif()
+
+if(TARGET ZLIB::ZLIB)
+    target_link_libraries(${PROJECT_NAME} PRIVATE ZLIB::ZLIB)
+else()
+    target_link_libraries(${PROJECT_NAME} PRIVATE z)
+endif()
+
+# capsimage and floppybridge are plugins (not linked into amiberry-lite) but
+# are copied by post-build commands. Explicit dependencies ensure they are
+# built.
+add_dependencies(${PROJECT_NAME} mt32emu floppybridge capsimage guisan)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     find_library(UTIL_LIBRARY util)
     if(UTIL_LIBRARY)
         target_link_libraries(${PROJECT_NAME} PRIVATE ${UTIL_LIBRARY})
     endif()
     target_link_libraries(${PROJECT_NAME} PRIVATE rt)
-endif ()
+elseif(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
+    find_library(UTIL_LIBRARY util REQUIRED)
+    # REQUIRED will make sure the build fails earlier if libutil isn't found
+    find_library(ICONV_LIB iconv PATHS /usr/local/lib REQUIRED)
+    target_link_libraries(${PROJECT_NAME} PRIVATE ${UTIL_LIBRARY} ${ICONV_LIB})
+    target_link_libraries(${PROJECT_NAME} PRIVATE ${LIBUSB_LIBRARY})
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Haiku")
+    target_link_libraries(${PROJECT_NAME} PRIVATE network iconv bsd)
+endif()
 
-# Add dependencies to ensure external libraries are built
-add_dependencies(${PROJECT_NAME} mt32emu floppybridge capsimage guisan)
+# Platform system libraries must come AFTER all other dependencies so that
+# static libs (enet, etc.) can resolve their system library references.
+if(AMIBERRY_PLATFORM_LIBS)
+    target_link_libraries(${PROJECT_NAME} PRIVATE ${AMIBERRY_PLATFORM_LIBS})
+endif()

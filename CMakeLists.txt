@@ -25,7 +25,7 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
 # IDE & Tooling support
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "Export compile_commands.json" FORCE)
 
 # Prevent in-tree builds
 if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_CURRENT_BINARY_DIR)
@@ -35,7 +35,8 @@ endif()
 # Set CMake module path
 set(CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake ${CMAKE_MODULE_PATH})
 
-# Platform-specific include/link path variables; populated here and in
+# Platform-specific include/link path variables; initialized here (before any
+# platform block appends to them) and populated in
 # cmake/StandardProjectSettings.cmake, applied to the target in
 # cmake/SourceFiles.cmake.
 set(AMIBERRY_PLATFORM_INCLUDE_DIRS "")
@@ -69,57 +70,22 @@ if(ARCH_LOWER MATCHES "riscv|loongarch")
     set(USE_PCEM OFF CACHE BOOL "Use PCem for hardware emulation (no backend for this architecture)" FORCE)
 endif()
 
-# Versioning
-set(VERSION_MAJOR "5" CACHE STRING "Major version")
-set(VERSION_MINOR "9" CACHE STRING "Minor version")
-set(VERSION_PATCH "2" CACHE STRING "Patch version")
+# Pre-release version suffix
 set(VERSION_PRE_RELEASE "2" CACHE STRING "Pre-release version")
-set(VERSION "${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_PATCH}")
-
-# Use PkgConfig only on FreeBSD
-if(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
-	# Required packages via pkg-config
-	find_package(PkgConfig REQUIRED)
-	pkg_check_modules(SDL2 REQUIRED sdl2)
-	pkg_check_modules(SDL2_TTF REQUIRED SDL2_ttf)
-	pkg_check_modules(SDL2_IMAGE REQUIRED SDL2_image)
-	pkg_check_modules(FLAC REQUIRED flac)
-	pkg_check_modules(PNG REQUIRED libpng)
-
-	include_directories(
-    	${SDL2_INCLUDE_DIRS}
-    	${SDL2_TTF_INCLUDE_DIRS}
-    	${SDL2_IMAGE_INCLUDE_DIRS}
-    	${FLAC_INCLUDE_DIRS}
-    	${PNG_INCLUDE_DIRS}
-	)
-
-	link_libraries(
-    	${SDL2_LIBRARIES}
-    	${SDL2_TTF_LIBRARIES}
-    	${SDL2_IMAGE_LIBRARIES}
-    	${FLAC_LIBRARIES}
-    	${PNG_LIBRARIES}
-	)
+set(AMIBERRY_PRODUCT_VERSION "${PROJECT_VERSION}")
+if(VERSION_PRE_RELEASE)
+    set(AMIBERRY_PRODUCT_VERSION "${PROJECT_VERSION}-${VERSION_PRE_RELEASE}")
 endif()
 
-# macOS-specific identifier (optional cosmetic)
-if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-    set(PROJECT_NAME "Amiberry-Lite")
-    set(CMAKE_PROJECT_NAME "Amiberry-Lite")
-endif()
-
-# Project identity
+# Project identity & metadata
+set(AMIBERRY_DISPLAY_NAME "Amiberry-Lite")
 set(PROJECT_COMPANY_NAME "BlitterStudio")
 set(PROJECT_COMPANY_NAMESPACE "com.blitterstudio")
+file(WRITE "${CMAKE_BINARY_DIR}/amiberry-product-version.txt" "${AMIBERRY_PRODUCT_VERSION}\n")
 
-# Global definitions
-#add_definitions(-DLIBICONV_PLUG)
-
-# FreeBSD-specific linking and paths
+# FreeBSD-specific paths and libraries
 if(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
     list(APPEND AMIBERRY_PLATFORM_LINK_DIRS /usr/local/lib)
-
     find_library(LIBUSB_LIBRARY NAMES usb PATHS /usr/lib REQUIRED)
     if(NOT LIBUSB_LIBRARY)
         message(FATAL_ERROR "libusb not found in /usr/lib")
@@ -128,12 +94,26 @@ endif()
 
 # Install system and packaging
 include(GNUInstallDirs)
+set(AMIBERRY_PACKAGE_METADATA_EXCLUDES
+    PATTERN ".DS_Store" EXCLUDE
+    PATTERN "._*" EXCLUDE
+    PATTERN "__MACOSX" EXCLUDE
+    PATTERN ".AppleDouble" EXCLUDE
+    PATTERN ".LSOverride" EXCLUDE
+    PATTERN ".Spotlight-V100" EXCLUDE
+    PATTERN ".Trashes" EXCLUDE
+    PATTERN ".fseventsd" EXCLUDE
+)
 include(cmake/StandardProjectSettings.cmake)
 include(cmake/SourceFiles.cmake)
 include(cmake/Dependencies.cmake)
-add_subdirectory(packaging)
 
-# Link libraries (FreeBSD needs correct order)
-if(TARGET amiberry AND CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
-    target_link_libraries(amiberry PRIVATE ${LIBUSB_LIBRARY} serialport ${EXTRA_LIBS})
-endif()
+# Install rules may need dependency targets, so include them after dependency
+# discovery.
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
+    include(cmake/linux/install.cmake)
+elseif (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    include(cmake/macos/install.cmake)
+endif ()
+
+include(packaging/CMakeLists.txt)

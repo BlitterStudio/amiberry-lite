@@ -18,9 +18,10 @@
 #include "traps.h"
 #include "guisan/color.hpp"
 
-#define UAEMAJOR 5
-#define UAEMINOR 9
-#define UAESUBREV 2
+// Version comes from CMake compile definitions (AMIBERRY_VERSION_MAJOR/MINOR/PATCH)
+#define UAEMAJOR AMIBERRY_VERSION_MAJOR
+#define UAEMINOR AMIBERRY_VERSION_MINOR
+#define UAESUBREV AMIBERRY_VERSION_PATCH
 
 #define MAX_AMIGADISPLAYS 1
 

@@ -129,6 +129,14 @@ static int delete_trigger(blockinfo *bi, void *pc)
 
 
 typedef uae_u64 uintptr;
+
+// AArch64 general-purpose register access from the signal mcontext.
+// FreeBSD nests them under mc_gpregs; Linux exposes a flat regs array.
+#if !defined(__MACH__) && defined(__FreeBSD__) && defined(CPU_AARCH64)
+#define SIGCONTEXT_XREG(sigcont, i) ((sigcont)->mc_gpregs.gp_x[i])
+#elif !defined(__MACH__)
+#define SIGCONTEXT_XREG(sigcont, i) ((sigcont)->regs[i])
+#endif
 #ifndef __MACH__
 static int handle_exception(mcontext_t* sigcont, long fault_addr)
 #else
@@ -275,14 +283,14 @@ static int handle_exception(mcontext_t sigcont, long fault_addr)
 			if (transfer_type == TYPE_LOAD) {
 				// Perform load via indirect memory call
 #ifndef __MACH__
-				uae_u32 oldval = sigcont->regs[rd];
+				uae_u32 oldval = SIGCONTEXT_XREG(sigcont, rd);
 #else
 				uae_u32 oldval = sigcont->__ss.__x[rd];
 #endif
 				switch (transfer_size) {
 				case SIZE_BYTE:
 #ifndef __MACH__
-					sigcont->regs[rd] = (uae_u8)get_byte(amiga_addr);
+					SIGCONTEXT_XREG(sigcont, rd) = (uae_u8)get_byte(amiga_addr);
 #else
 					sigcont->__ss.__x[rd] = (uae_u8)get_byte(amiga_addr);
 #endif
@@ -290,7 +298,7 @@ static int handle_exception(mcontext_t sigcont, long fault_addr)
 
 				case SIZE_WORD:
 #ifndef __MACH__
-					sigcont->regs[rd] = bswap_16((uae_u16)get_word(amiga_addr));
+					SIGCONTEXT_XREG(sigcont, rd) = bswap_16((uae_u16)get_word(amiga_addr));
 #else
 					sigcont->__ss.__x[rd] = bswap_16((uae_u16)get_word(amiga_addr));
 #endif
@@ -298,14 +306,14 @@ static int handle_exception(mcontext_t sigcont, long fault_addr)
 
 				case SIZE_INT:
 #ifndef __MACH__
-					sigcont->regs[rd] = bswap_32(get_long(amiga_addr));
+					SIGCONTEXT_XREG(sigcont, rd) = bswap_32(get_long(amiga_addr));
 #else
 					sigcont->__ss.__x[rd] = bswap_32(get_long(amiga_addr));
 #endif
 					break;
 				}
 #ifndef __MACH__
-				output_log(_T("New value in x%d: 0x%08llx (old: 0x%08x)\n"), rd, sigcont->regs[rd], oldval);
+				output_log(_T("New value in x%d: 0x%08llx (old: 0x%08x)\n"), rd, SIGCONTEXT_XREG(sigcont, rd), oldval);
 #else
 				output_log(_T("New value in x%d: 0x%08llx (old: 0x%08x)\n"), rd, sigcont->__ss.__x[rd], oldval);
 #endif
@@ -315,7 +323,7 @@ static int handle_exception(mcontext_t sigcont, long fault_addr)
 				switch (transfer_size) {
 				case SIZE_BYTE: {
 #ifndef __MACH__
-					put_byte(amiga_addr, sigcont->regs[rd]);
+					put_byte(amiga_addr, SIGCONTEXT_XREG(sigcont, rd));
 #else
 					put_byte(amiga_addr, sigcont->__ss.__x[rd]);
 #endif
@@ -323,7 +331,7 @@ static int handle_exception(mcontext_t sigcont, long fault_addr)
 				}
 				case SIZE_WORD: {
 #ifndef __MACH__
-					put_word(amiga_addr, bswap_16(sigcont->regs[rd]));
+					put_word(amiga_addr, bswap_16(SIGCONTEXT_XREG(sigcont, rd)));
 #else
 					put_word(amiga_addr, bswap_16(sigcont->__ss.__x[rd]));
 #endif
@@ -331,7 +339,7 @@ static int handle_exception(mcontext_t sigcont, long fault_addr)
 				}
 				case SIZE_INT: {
 #ifndef __MACH__
-					put_long(amiga_addr, bswap_32(sigcont->regs[rd]));
+					put_long(amiga_addr, bswap_32(SIGCONTEXT_XREG(sigcont, rd)));
 #else
 					put_long(amiga_addr, bswap_32(sigcont->__ss.__x[rd]));
 #endif

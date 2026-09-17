@@ -9,7 +9,7 @@
 #include "uae/mman.h"
 #include <sys/mman.h>
 #include "sys/types.h"
-#ifndef __MACH__
+#if defined(__linux__) && !defined(__ANDROID__)
 #include "sys/sysinfo.h"
 #endif
 
@@ -61,7 +61,7 @@ void free_AmigaMem(void)
 
 bool can_have_1gb()
 {
-#ifndef __MACH__
+#if defined(__linux__) && !defined(__ANDROID__)
 	struct sysinfo mem_info {};
 	sysinfo(&mem_info);
 	long long total_phys_mem = mem_info.totalram;

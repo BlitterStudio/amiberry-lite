@@ -74,7 +74,7 @@ jobs:
             -e CCACHE_DIR=/root/.ccache \
             ${{ matrix.image }} \
             bash -euo pipefail -c '
-              command -v ccache >/dev/null 2>&1 || { apt-get update -qq; apt-get install -y -qq ccache; }
+              command -v ccache >/dev/null 2>&1 && command -v file >/dev/null 2>&1 || { apt-get update -qq; apt-get install -y -qq ccache file; }
               ccache --zero-stats >/dev/null || true
               cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DDISTRO_CODENAME=${{ matrix.name }}
               cmake --build build -j"$(nproc)"
@@ -141,7 +141,7 @@ jobs:
             -e CCACHE_DIR=/root/.ccache \
             ${{ matrix.image }} \
             bash -euo pipefail -c '
-              command -v ccache >/dev/null 2>&1 || { apt-get update -qq; apt-get install -y -qq ccache; }
+              command -v ccache >/dev/null 2>&1 && command -v file >/dev/null 2>&1 || { apt-get update -qq; apt-get install -y -qq ccache file; }
               ccache --zero-stats >/dev/null || true
               cmake -DCMAKE_TOOLCHAIN_FILE=cmake/Toolchain-aarch64-linux-gnu.cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DDISTRO_CODENAME=${{ matrix.name }}
               cmake --build build -j"$(nproc)"
@@ -208,7 +208,7 @@ jobs:
             -e CCACHE_DIR=/root/.ccache \
             ${{ matrix.image }} \
             bash -euo pipefail -c '
-              command -v ccache >/dev/null 2>&1 || { apt-get update -qq; apt-get install -y -qq ccache; }
+              command -v ccache >/dev/null 2>&1 && command -v file >/dev/null 2>&1 || { apt-get update -qq; apt-get install -y -qq ccache file; }
               ccache --zero-stats >/dev/null || true
               cmake -DCMAKE_TOOLCHAIN_FILE=cmake/Toolchain-arm-linux-gnueabihf.cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DDISTRO_CODENAME=${{ matrix.name }}
               cmake --build build -j"$(nproc)"

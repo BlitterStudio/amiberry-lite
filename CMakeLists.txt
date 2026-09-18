@@ -12,7 +12,7 @@ if(POLICY CMP0177)
 endif()
 
 project(amiberry-lite
-    VERSION 5.9.2
+    VERSION 5.9.3
     LANGUAGES C CXX ASM
     DESCRIPTION "Optimized Amiga emulator for various platforms"
     HOMEPAGE_URL "https://amiberry.com"
@@ -72,7 +72,7 @@ if(ARCH_LOWER MATCHES "riscv|loongarch")
 endif()
 
 # Pre-release version suffix
-set(VERSION_PRE_RELEASE "2" CACHE STRING "Pre-release version")
+set(VERSION_PRE_RELEASE "" CACHE STRING "Pre-release version")
 set(AMIBERRY_PRODUCT_VERSION "${PROJECT_VERSION}")
 if(VERSION_PRE_RELEASE)
     set(AMIBERRY_PRODUCT_VERSION "${PROJECT_VERSION}-${VERSION_PRE_RELEASE}")

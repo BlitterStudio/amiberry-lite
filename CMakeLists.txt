@@ -12,7 +12,7 @@ if(POLICY CMP0177)
 endif()
 
 project(amiberry-lite
-    VERSION 5.9.3
+    VERSION 5.9.4
     LANGUAGES C CXX ASM
     DESCRIPTION "Optimized Amiga emulator for various platforms"
     HOMEPAGE_URL "https://amiberry.com"

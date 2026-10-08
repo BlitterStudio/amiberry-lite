@@ -1314,4 +1314,7 @@ void run_gui()
 
 	// Reset counter for access violations
 	init_max_signals();
+	// A keyboard hotplugged while the GUI ran may have let SDL take over the
+	// JIT fault handlers; reclaim them before emulation resumes.
+	install_fault_signal_handlers();
 }

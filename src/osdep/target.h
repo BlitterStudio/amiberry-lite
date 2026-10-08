@@ -95,6 +95,7 @@ void run_gui();
 void gui_widgets_halt();
 void amiberry_gui_halt();
 void init_max_signals();
+bool install_fault_signal_handlers();
 void wait_for_vsync();
 unsigned long target_lastsynctime();
 

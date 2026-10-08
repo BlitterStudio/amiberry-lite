@@ -320,6 +320,49 @@ extern void signal_segv(int signum, siginfo_t* info, void* ptr);
 extern void signal_buserror(int signum, siginfo_t* info, void* ptr);
 extern void signal_term(int signum, siginfo_t* info, void* ptr);
 
+#if defined(CPU_arm)
+static bool install_fault_signal_handler(const int signum, const char* name,
+	void (*handler)(int, siginfo_t*, void*))
+{
+	struct sigaction current{};
+	if (sigaction(signum, nullptr, &current) == 0) {
+		if ((current.sa_flags & SA_SIGINFO) && current.sa_sigaction == handler)
+			return true;
+		if (current.sa_handler != SIG_DFL && current.sa_handler != SIG_IGN)
+			write_log("Reclaiming %s handler installed by another component.\n", name);
+	}
+
+	struct sigaction action{};
+	action.sa_sigaction = handler;
+	action.sa_flags = SA_SIGINFO;
+	if (sigaction(signum, &action, nullptr) < 0) {
+		write_log("Failed to set signal handler (%s).\n", name);
+		return false;
+	}
+	return true;
+}
+#endif
+
+// JIT direct memory access depends on our fault handlers seeing the original
+// faulting context (e.g. Kickstart probing past the RAMSEY banks). SDL's evdev
+// console keyboard code (KMSDRM) installs its own SIGSEGV/SIGILL/SIGBUS handlers
+// whenever it mutes a keyboard: they restore the console, reinstate the previous
+// handler and re-raise with raise(), so ours only sees the raise() context and
+// JIT recovery fails. Reinstall ours on top after SDL init, after the GUI, and
+// on every event pump (SDL2 has no keyboard hotplug event; newer SDL2 releases
+// re-register on hotplug). Unhandled faults still restore the console:
+// signal_segv() calls SDL_Quit().
+bool install_fault_signal_handlers()
+{
+#if defined(CPU_arm)
+	return install_fault_signal_handler(SIGSEGV, "SIGSEGV", signal_segv)
+		&& install_fault_signal_handler(SIGILL, "SIGILL", signal_segv)
+		&& install_fault_signal_handler(SIGBUS, "SIGBUS", signal_buserror);
+#else
+	return true;
+#endif
+}
+
 extern void set_last_active_config(const char* filename);
 
 std::string home_dir;
@@ -2053,6 +2096,7 @@ int handle_msgpump(bool vblank)
 		if (currprefs.clipboard_sharing)
 			update_clipboard();
 	}
+	install_fault_signal_handlers();
 	return got_event;
 }
 
@@ -5008,28 +5052,8 @@ int main(int argc, char* argv[])
 
 	logging_init();
 #if defined (CPU_arm)
-	memset(&action, 0, sizeof action);
-	action.sa_sigaction = signal_segv;
-	action.sa_flags = SA_SIGINFO;
-	if (sigaction(SIGSEGV, &action, nullptr) < 0)
-	{
-		printf("Failed to set signal handler (SIGSEGV).\n");
+	if (!install_fault_signal_handlers())
 		abort();
-	}
-	if (sigaction(SIGILL, &action, nullptr) < 0)
-	{
-		printf("Failed to set signal handler (SIGILL).\n");
-		abort();
-	}
-
-	memset(&action, 0, sizeof action);
-	action.sa_sigaction = signal_buserror;
-	action.sa_flags = SA_SIGINFO;
-	if (sigaction(SIGBUS, &action, nullptr) < 0)
-	{
-		printf("Failed to set signal handler (SIGBUS).\n");
-		abort();
-	}
 
 	memset(&action, 0, sizeof action);
 	action.sa_sigaction = signal_term;
@@ -5051,6 +5075,7 @@ int main(int argc, char* argv[])
 		write_log("SDL could not initialize! SDL_Error: %s\n", SDL_GetError());
 		abort();
 	}
+	install_fault_signal_handlers();
 #ifdef USE_OPENGL
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);

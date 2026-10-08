@@ -2126,6 +2126,7 @@ bool handle_events()
 		{
 			process_event(event);
 		}
+		install_fault_signal_handlers();
 
 		// Keyboard, mouse and joystick read events are handled in process_event in Amiberry
 		//inputdevicefunc_keyboard.read();

@@ -9,6 +9,8 @@
 #include "uae.h"
 #include "gui_handling.h"
 #include "tinyxml2.h"
+#include <nlohmann/json.hpp>
+#include <fstream>
 
 extern int console_logging;
 
@@ -298,57 +300,86 @@ std::string get_xml_timestamp(const std::string& xml_filename)
 	return "";
 }
 
-class DownloadXMLButtonActionListener : public gcn::ActionListener
+std::string get_json_timestamp(const std::string& json_filename)
+{
+	std::ifstream f(json_filename);
+	if (!f.is_open())
+		return "";
+
+	try
+	{
+		// Parse the full file (nlohmann has no partial parsing), but only
+		// to read the timestamp fields near the top.
+		nlohmann::json doc = nlohmann::json::parse(f, nullptr, false);
+		f.close();
+		if (doc.is_discarded())
+			return "";
+
+		// Prefer upstream_timestamp, fall back to generated
+		if (doc.contains("upstream_timestamp") && doc["upstream_timestamp"].is_string())
+			return doc["upstream_timestamp"].get<std::string>();
+		if (doc.contains("generated") && doc["generated"].is_string())
+			return doc["generated"].get<std::string>();
+	}
+	catch (...)
+	{
+		// Parse failed
+	}
+	return "";
+}
+
+class UpdateWHDBootFilesButtonActionListener : public gcn::ActionListener
 {
 public:
 	void action(const gcn::ActionEvent& actionEvent) override
 	{
-		std::string destination;
-		//  download WHDLoad executable
-		destination = get_whdbootpath().append("WHDLoad");
-		write_log("Downloading %s ...\n", destination.c_str());
-		download_file("https://github.com/BlitterStudio/amiberry/blob/master/whdboot/WHDLoad?raw=true", destination, false);
+		// Sources: WHDLoad by Bert Jahn from whdload.de, the Kickstart RTB
+		// files and JST from Aminet, host-quit, boot-data.zip and the game
+		// database (JSON, with the XML as a fallback) from the Amiberry
+		// project. WHDLoad is re-fetched on every update; the RTB files are
+		// fetched only while one is missing and JST only when it is
+		// selected and missing.
+		const auto json_destination = get_whdbootpath().append("game-data/whdload_db.json");
+		const auto xml_destination = get_whdbootpath().append("game-data/whdload_db.xml");
+		const auto old_json_timestamp = get_json_timestamp(json_destination);
+		const auto old_xml_timestamp = get_xml_timestamp(xml_destination);
 
-		//  download JST executable
-		destination = get_whdbootpath().append("JST");
-		write_log("Downloading %s ...\n", destination.c_str());
-		download_file("https://github.com/BlitterStudio/amiberry/blob/master/whdboot/JST?raw=true", destination, false);
+		const auto result = download_whdboot_assets();
 
-		//  download AmiQuit executable
-		destination = get_whdbootpath().append("AmiQuit");
-		write_log("Downloading %s ...\n", destination.c_str());
-		download_file("https://github.com/BlitterStudio/amiberry/blob/master/whdboot/AmiQuit?raw=true", destination, false);
-
-		//  download boot-data.zip
-		destination = get_whdbootpath().append("boot-data.zip");
-		write_log("Downloading %s ...\n", destination.c_str());
-		download_file("https://github.com/BlitterStudio/amiberry/blob/master/whdboot/boot-data.zip?raw=true", destination, false);
-
-		// download kickstart RTB files for maximum compatibility
-		download_rtb("kick33180.A500.RTB");
-		download_rtb("kick34005.A500.RTB");
-		download_rtb("kick40063.A600.RTB");
-		download_rtb("kick40068.A1200.RTB");
-		download_rtb("kick40068.A4000.RTB");
-
-		destination = get_whdbootpath().append("game-data/whdload_db.xml");
-		const auto old_timestamp = get_xml_timestamp(destination);
-		write_log("Downloading %s ...\n", destination.c_str());
-		const auto result = download_file("https://github.com/HoraceAndTheSpider/Amiberry-XML-Builder/blob/master/whdload_db.xml?raw=true", destination, true);
-
-		if (result)
+		switch (result.outcome)
 		{
-			const auto new_timestamp = get_xml_timestamp(destination);
-			ShowMessage("XML Downloader", "Updated XML downloaded.", "Previous timestamp: " + old_timestamp, "New timestamp: " + new_timestamp, "Ok", "");
+		case whdboot_download_outcome::success:
+		case whdboot_download_outcome::partial_failure:
+			{
+				const auto new_json_timestamp = get_json_timestamp(json_destination);
+				const auto new_xml_timestamp = get_xml_timestamp(xml_destination);
+				ShowMessage("WHDBooter files",
+					result.outcome == whdboot_download_outcome::partial_failure
+						? "Some WHDBooter files were updated; others failed (see the log)."
+						: "WHDBooter files updated.",
+					"WHDLoad: Bert Jahn (whdload.de); RTB files and JST: Aminet;\nhost-quit, boot-data.zip and the database: Amiberry project.",
+					"JSON previous: " + old_json_timestamp + "\nJSON new: " + new_json_timestamp
+						+ "\nXML previous: " + old_xml_timestamp + "\nXML new: " + new_xml_timestamp,
+					"Ok", "");
+			}
+			break;
+		case whdboot_download_outcome::busy:
+			ShowMessage("WHDBooter files",
+				"Download not started.",
+				"Another download is in progress, or a machine is running unpaused.",
+				"Stop the machine and try again.", "Ok", "");
+			break;
+		case whdboot_download_outcome::failed:
+		default:
+			ShowMessage("WHDBooter files", "Failed to download files!", "Please check the log for more details.", "", "Ok", "");
+			break;
 		}
-		else
-			ShowMessage("XML Downloader", "Failed to download files!", "Please check the log for more details.", "", "Ok", "");
-		
+
 		cmdDownloadXML->requestFocus();
 	}
 };
 
-static DownloadXMLButtonActionListener* downloadXMLButtonActionListener;
+static UpdateWHDBootFilesButtonActionListener* updateWHDBootFilesButtonActionListener;
 
 class DownloadControllerDbActionListener : public gcn::ActionListener
 {
@@ -701,13 +732,13 @@ void InitPanelPaths(const config_category& category)
 	cmdRescanROMs->setId("cmdRescanROMs");
 	cmdRescanROMs->addActionListener(rescanROMsButtonActionListener);
 
-	downloadXMLButtonActionListener = new DownloadXMLButtonActionListener();
+	updateWHDBootFilesButtonActionListener = new UpdateWHDBootFilesButtonActionListener();
 	cmdDownloadXML = new gcn::Button("Update WHDBooter files");
 	cmdDownloadXML->setSize(cmdDownloadXML->getWidth() + DISTANCE_BORDER, BUTTON_HEIGHT);
 	cmdDownloadXML->setBaseColor(gui_base_color);
 	cmdDownloadXML->setForegroundColor(gui_foreground_color);
 	cmdDownloadXML->setId("cmdDownloadXML");
-	cmdDownloadXML->addActionListener(downloadXMLButtonActionListener);
+	cmdDownloadXML->addActionListener(updateWHDBootFilesButtonActionListener);
 
 	downloadControllerDbActionListener = new DownloadControllerDbActionListener();
 	cmdDownloadCtrlDb = new gcn::Button("Update Controllers DB");
@@ -794,7 +825,7 @@ void ExitPanelPaths()
 	delete cmdDownloadCtrlDb;
 	delete folderButtonActionListener;
 	delete rescanROMsButtonActionListener;
-	delete downloadXMLButtonActionListener;
+	delete updateWHDBootFilesButtonActionListener;
 	delete downloadControllerDbActionListener;
 	delete enableLoggingActionListener;
 }
@@ -870,15 +901,19 @@ bool HelpPanelPaths(std::vector<std::string>& helptext)
         helptext.emplace_back("for Amiberry to pick them up. This button will regenerate the amiberry.conf file");
         helptext.emplace_back("if it's missing, and will be populated with the default values.");
         helptext.emplace_back(" ");
-        helptext.emplace_back("The \"Update WHDBooter files\" button will attempt to download the latest XML used for");
-        helptext.emplace_back("the WHDLoad-booter functionality of Amiberry, along with all related files in the");
-		helptext.emplace_back("\"whdboot\" directory. It requires an internet connection and write permissions in the");
-        helptext.emplace_back("destination directory. The downloaded XML file will be stored in the default location");
-        helptext.emplace_back("(whdboot/game-data/whdload_db.xml). Once the file is successfully downloaded, you");
-        helptext.emplace_back("will also get a dialog box informing you about the details. A backup copy of the");
-        helptext.emplace_back("existing whdload_db.xml is made (whdboot/game-data/whdload_db.bak), to preserve any");
-        helptext.emplace_back("custom edits that may have been made. The rest of the files will be updated with the");
-        helptext.emplace_back("latest version from the repository.");
+        helptext.emplace_back("The \"Update WHDBooter files\" button will download the files the WHDLoad-booter");
+        helptext.emplace_back("needs. WHDLoad, JST and the Kickstart RTB files are not bundled with Amiberry-Lite");
+        helptext.emplace_back("(their licences do not allow redistribution), so they are fetched on demand from");
+        helptext.emplace_back("their authors' distribution points: WHDLoad by Bert Jahn from whdload.de (re-fetched");
+        helptext.emplace_back("on every update, and only installed after it was verified against its archive's");
+        helptext.emplace_back("CRC), the RTB files once from Aminet (skick346, pinned by SHA-256, never");
+        helptext.emplace_back("overwritten) and JST from Aminet only when \"Use JST instead of WHDLoad\" is");
+        helptext.emplace_back("enabled and it is missing. host-quit, boot-data.zip and the game database come");
+        helptext.emplace_back("from the Amiberry project: the database is the JSON whdload_db.json (stored in");
+        helptext.emplace_back("whdboot/game-data, with a backup .bak of the existing copy), falling back to the");
+        helptext.emplace_back("legacy XML whdload_db.xml if the JSON download fails. The button requires an");
+        helptext.emplace_back("internet connection and write permissions in the destination directory; a failed");
+        helptext.emplace_back("download never replaces an existing file.");
 		helptext.emplace_back(" ");
         helptext.emplace_back("The \"Update Controllers DB\" button will attempt to download the latest version of");
         helptext.emplace_back("the bundled gamecontrollerdb.txt file, to be stored in the Controllers files path.");

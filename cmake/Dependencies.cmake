@@ -118,6 +118,22 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         mt32emu
 )
 
+# nlohmann-json (header-only) for the WHDLoad JSON booter database:
+# use the system package when it provides the CMake config, otherwise
+# fetch the same pinned release Amiberry uses.
+find_package(nlohmann_json CONFIG QUIET)
+if(NOT nlohmann_json_FOUND)
+    include(FetchContent)
+    FetchContent_Declare(json
+        GIT_REPOSITORY https://github.com/nlohmann/json.git
+        GIT_TAG v3.11.3
+        GIT_SHALLOW TRUE
+    )
+    set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(json)
+endif()
+target_link_libraries(${PROJECT_NAME} PRIVATE nlohmann_json::nlohmann_json)
+
 if (NOT WIN32)
     target_link_libraries(${PROJECT_NAME} PRIVATE pthread dl)
 endif()

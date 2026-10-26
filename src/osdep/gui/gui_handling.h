@@ -425,7 +425,28 @@ extern void update_gui_screen();
 extern void cap_fps(Uint64 start);
 extern long get_file_size(const std::string& filename);
 extern bool download_file(const std::string& source, const std::string& destination, bool keep_backup);
-extern void download_rtb(const std::string& filename);
+
+enum class whdboot_download_outcome
+{
+	success,
+	partial_failure,
+	failed,
+	busy
+};
+struct whdboot_download_result
+{
+	whdboot_download_outcome outcome = whdboot_download_outcome::failed;
+};
+
+// Downloads the WHDBoot runtime assets on demand: WHDLoad (Bert Jahn)
+// from whdload.de, the Kickstart RTB files and JST from Aminet, and
+// host-quit, boot-data.zip and the game database from the Amiberry
+// project. Re-fetches WHDLoad, host-quit, boot-data.zip and the database;
+// fetches the RTB files only while one is missing and JST only when it
+// is selected and missing. Never overwrites an existing RTB file or JST.
+extern whdboot_download_result download_whdboot_assets();
+extern bool whdboot_can_download();
+extern const std::vector<std::string>& whdboot_skick_rtb_files();
 extern int fromdfxtype(int num, int dfx, int subtype);
 extern int todfxtype(int num, int dfx, int* subtype);
 extern void DisplayDiskInfo(int num);

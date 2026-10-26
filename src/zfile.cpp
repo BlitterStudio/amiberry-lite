@@ -13,6 +13,8 @@
 #include "sysconfig.h"
 #include "sysdeps.h"
 
+#include <mutex>
+
 #include "options.h"
 #include "zfile.h"
 #include "disk.h"
@@ -36,6 +38,9 @@
 #include "archivers/wrp/warp.h"
 
 static struct zfile *zlist = 0;
+// zfiles are opened and closed on several threads (the emulator, a WHDBooter
+// download): the list of open handles is only touched under this lock.
+static std::mutex zlist_mutex;
 
 const TCHAR *uae_archive_extensions[] = { _T("zip"), _T("rar"), _T("7z"), _T("lha"), _T("lzh"), _T("lzx"), _T("tar"), NULL };
 
@@ -185,8 +190,11 @@ static struct zfile *zfile_create (struct zfile *prev, const TCHAR *originalname
 	if (!z)
 		return 0;
 	memset (z, 0, sizeof *z);
-	z->next = zlist;
-	zlist = z;
+	{
+		std::lock_guard<std::mutex> lock(zlist_mutex);
+		z->next = zlist;
+		zlist = z;
+	}
 	z->opencnt = 1;
 	if (prev && prev->originalname)
 		z->originalname = my_strdup(prev->originalname);
@@ -217,9 +225,15 @@ static void zfile_free (struct zfile *f)
 void zfile_exit (void)
 {
 	struct zfile *l;
-	while ((l = zlist)) {
-		zlist = l->next;
+	{
+		std::lock_guard<std::mutex> lock(zlist_mutex);
+		l = zlist;
+		zlist = nullptr;
+	}
+	while (l) {
+		struct zfile *next = l->next;
 		zfile_free (l);
+		l = next;
 	}
 }
 
@@ -245,26 +259,24 @@ void zfile_fclose (struct zfile *f)
 		zfile_fclose (f->archiveparent);
 		f->archiveparent = NULL;
 	}
-	struct zfile *pl = NULL;
-	struct zfile *nxt;
-	struct zfile *l  = zlist;
-	while (l != f) {
-		if (l == 0) {
-			write_log (_T("zfile: tried to free already freed or nonexisting filehandle!\n"));
-			return;
+	{
+		std::lock_guard<std::mutex> lock(zlist_mutex);
+		struct zfile *pl = NULL;
+		struct zfile *l = zlist;
+		while (l != f) {
+			if (l == 0) {
+				write_log (_T("zfile: tried to free already freed or nonexisting filehandle!\n"));
+				return;
+			}
+			pl = l;
+			l = l->next;
 		}
-		pl = l;
-		l = l->next;
+		if (!pl)
+			zlist = l->next;
+		else
+			pl->next = l->next;
 	}
-	if (l)
-		nxt = l->next;
 	zfile_free (f);
-	if (l == 0)
-		return;
-	if(!pl)
-		zlist = nxt;
-	else
-		pl->next = nxt;
 }
 
 static void removeext (TCHAR *s, const TCHAR *ext)
@@ -2673,6 +2685,10 @@ uae_u32 zfile_crc32(struct zfile *f)
 
 static struct zvolume *zvolume_list;
 
+// See zarchive.h: one recursive lock for the volume list and (with the
+// lock in archive_access_select/scan) for the archivers' decoder state.
+std::recursive_mutex zarchive_access_mutex;
+
 static void recurparent (TCHAR *newpath, struct znode *zn, int recurse)
 {
 	if (zn->parent && (&zn->volume->root != zn->parent || zn->volume->parentz == NULL)) {
@@ -3279,6 +3295,7 @@ static struct zvolume *zfile_fopen_directory (const TCHAR *dirname)
 
 struct zvolume *zfile_fopen_archive (const TCHAR *filename, int flags)
 {
+	std::lock_guard<std::recursive_mutex> zarchive_guard(zarchive_access_mutex);
 	struct zvolume *zv = NULL;
 	struct zfile *zf = zfile_fopen_nozip (filename, _T("rb"));
 
@@ -3378,6 +3395,7 @@ struct zvolume *zfile_fopen_archive_root (const TCHAR *filename, int flags)
 
 void zfile_fclose_archive (struct zvolume *zv)
 {
+	std::lock_guard<std::recursive_mutex> zarchive_guard(zarchive_access_mutex);
 	struct znode *zn;
 	struct zvolume *v;
 
@@ -3430,6 +3448,7 @@ struct zdirectory {
 
 struct zdirectory *zfile_opendir_archive (const TCHAR *path, int flags)
 {
+	std::lock_guard<std::recursive_mutex> zarchive_guard(zarchive_access_mutex);
 	struct zvolume *zv = get_zvolume (path);
 	bool created = false;
 	if (zv == NULL) {
@@ -3468,6 +3487,7 @@ struct zdirectory *zfile_opendir_archive (const TCHAR *path)
 }
 void zfile_closedir_archive (struct zdirectory *zd)
 {
+	std::lock_guard<std::recursive_mutex> zarchive_guard(zarchive_access_mutex);
 	if (!zd)
 		return;
 	zfile_fclose_archive (zd->zv);
@@ -3477,6 +3497,7 @@ void zfile_closedir_archive (struct zdirectory *zd)
 }
 int zfile_readdir_archive (struct zdirectory *zd, TCHAR *out, bool fullpath)
 {
+	std::lock_guard<std::recursive_mutex> zarchive_guard(zarchive_access_mutex);
 	if (out)
 		out[0] = 0;
 	if (!zd->n || (zd->filenames != NULL && zd->offset >= zd->cnt))
@@ -3524,6 +3545,7 @@ int zfile_readdir_archive (struct zdirectory *zd, TCHAR *out)
 
 struct zfile *zfile_readdir_archive_open (struct zdirectory *zd, const TCHAR *mode)
 {
+	std::lock_guard<std::recursive_mutex> zarchive_guard(zarchive_access_mutex);
 	TCHAR path[MAX_DPATH];
 	if (!zfile_readdir_archive (zd, path, true))
 		return NULL;
@@ -3533,12 +3555,14 @@ struct zfile *zfile_readdir_archive_open (struct zdirectory *zd, const TCHAR *mo
 
 void zfile_resetdir_archive (struct zdirectory *zd)
 {
+	std::lock_guard<std::recursive_mutex> zarchive_guard(zarchive_access_mutex);
 	zd->offset = 0;
 	zd->n = zd->first;
 }
 
 int zfile_fill_file_attrs_archive (const TCHAR *path, int *isdir, int *flags, TCHAR **comment)
 {
+	std::lock_guard<std::recursive_mutex> zarchive_guard(zarchive_access_mutex);
 	struct zvolume *zv = get_zvolume (path);
 	struct znode *zn = get_znode (zv, path, TRUE);
 
@@ -3560,6 +3584,7 @@ int zfile_fill_file_attrs_archive (const TCHAR *path, int *isdir, int *flags, TC
 
 int zfile_fs_usage_archive (const TCHAR *path, const TCHAR *disk, struct fs_usage *fsp)
 {
+	std::lock_guard<std::recursive_mutex> zarchive_guard(zarchive_access_mutex);
 	struct zvolume *zv = get_zvolume (path);
 
 	if (!zv)
@@ -3571,6 +3596,7 @@ int zfile_fs_usage_archive (const TCHAR *path, const TCHAR *disk, struct fs_usag
 
 int zfile_stat_archive (const TCHAR *path, struct mystat *s)
 {
+	std::lock_guard<std::recursive_mutex> zarchive_guard(zarchive_access_mutex);
 	struct zvolume *zv = get_zvolume (path);
 	struct znode *zn = get_znode (zv, path, TRUE);
 
@@ -3607,6 +3633,7 @@ void zfile_close_archive (struct zfile *d)
 
 struct zfile *zfile_open_archive (const TCHAR *path, int flags)
 {
+	std::lock_guard<std::recursive_mutex> zarchive_guard(zarchive_access_mutex);
 	struct zvolume *zv = get_zvolume (path);
 	struct znode *zn = get_znode (zv, path, TRUE);
 	struct zfile *z;
@@ -3628,6 +3655,7 @@ struct zfile *zfile_open_archive (const TCHAR *path, int flags)
 
 int zfile_exists_archive (const TCHAR *path, const TCHAR *rel)
 {
+	std::lock_guard<std::recursive_mutex> zarchive_guard(zarchive_access_mutex);
 	TCHAR tmp[MAX_DPATH];
 	struct zvolume *zv;
 	struct znode *zn;

@@ -62,7 +62,7 @@ jobs:
               cmake ninja pkgconf git \
               sdl2 sdl2_image sdl2_ttf flac mpg123 png \
               libsysinfo libiconv dbus \
-              libserialport enet portmidi libmpeg2 libpcap zstd
+              libserialport enet portmidi libmpeg2 libpcap zstd nlohmann-json
           run: |
             set -eu
             freebsd-version

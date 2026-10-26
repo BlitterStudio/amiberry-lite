@@ -1525,14 +1525,19 @@ static bool apply_auto_detected_slave(const char* filepath,
 	whdload_slave slave;
 	slave.filename = best->filename;
 	whdload_prefs.selected_slave = slave;
-	whdload_prefs.slave_count = static_cast<int>(found_slaves.size());
+	// The startup sequence joins whdload_prefs.sub_path with the selected
+	// slave's name, so only slaves in the chosen slave's directory can be
+	// offered for selection.
 	whdload_prefs.slaves.clear();
 	for (const auto& s : found_slaves)
 	{
+		if (s.subpath != best->subpath)
+			continue;
 		whdload_slave entry;
 		entry.filename = s.filename;
 		whdload_prefs.slaves.emplace_back(entry);
 	}
+	whdload_prefs.slave_count = static_cast<int>(whdload_prefs.slaves.size());
 
 	detect_slave_hardware_from_header(filepath, best->subpath, best->filename, game_detail);
 

@@ -4960,6 +4960,59 @@ extern void load_theme(const std::string& theme_filename);
 extern void load_default_theme();
 extern void load_default_dark_theme();
 
+// Copies the bundled WHDBoot files an existing installation is missing
+// (host-quit above all: it replaced AmiQuit, and without it quitting on
+// exit stops working) from a bundled whdboot directory. Never overwrites
+// anything the user already has; the bundled XML database only goes in
+// when there is no database at all. Returns true when everything the
+// installation needs is present afterwards.
+static bool seed_missing_bundled_whdboot_files(const std::string& source_dir)
+{
+	if (source_dir.empty() || !my_existsdir(source_dir.c_str()))
+		return false;
+
+	std::error_code ec;
+	const auto copy_if_missing = [&](const char* const relative)
+	{
+		const std::string source = source_dir + relative;
+		if (!file_exists(source))
+			return;
+		const std::string destination = get_whdbootpath() + relative;
+		if (file_exists(destination))
+			return;
+		std::filesystem::copy_file(source, destination, ec);
+		if (!ec)
+		{
+			write_log("Seeded %s from %s\n", destination.c_str(), source.c_str());
+			if (strcmp(relative, "host-quit") == 0)
+			{
+				// The Amiga treats a file without the owner execute bit as
+				// not executable; the booter needs host-quit to run.
+				std::filesystem::permissions(destination,
+					std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec | std::filesystem::perms::others_exec,
+					std::filesystem::perm_options::add, ec);
+				if (ec)
+					ec.clear();
+			}
+		}
+		else
+			ec.clear();
+	};
+
+	copy_if_missing("host-quit");
+	copy_if_missing("boot-data.zip");
+	copy_if_missing("save-data/Kickstarts/kick31034.A1000.RTB");
+
+	const std::string whdboot_dir = get_whdbootpath();
+	if (!file_exists(whdboot_dir + "game-data/whdload_db.json")
+		&& !file_exists(whdboot_dir + "game-data/whdload_db.xml"))
+		copy_if_missing("game-data/whdload_db.xml");
+
+	return file_exists(whdboot_dir + "host-quit")
+		&& (file_exists(whdboot_dir + "boot-data.zip") || my_existsdir((whdboot_dir + "boot-data").c_str()))
+		&& (file_exists(whdboot_dir + "game-data/whdload_db.json")
+			|| file_exists(whdboot_dir + "game-data/whdload_db.xml"));
+}
 void create_missing_amiberry_folders()
 {
 #ifdef __MACH__
@@ -5033,6 +5086,40 @@ void create_missing_amiberry_folders()
 			write_log("attempting to download the WHDBoot runtime assets on demand (WHDLoad from\n");
 			write_log("whdload.de, the RTB files and JST from Aminet)...\n");
 			download_whdboot_assets();
+		}
+	}
+	else
+	{
+		// An existing installation may predate host-quit (which replaced
+		// AmiQuit) or miss another bundled file: seed anything that is
+		// missing, never overwriting what the user already has - as
+		// Amiberry's whdboot seed check does. WHDLoad, JST and the skick346
+		// RTB files are fetched on demand and are deliberately not seeded.
+		const std::string whdboot_dir = get_whdbootpath();
+		if (!file_exists(whdboot_dir + "host-quit")
+			|| (!file_exists(whdboot_dir + "boot-data.zip") && !my_existsdir((whdboot_dir + "boot-data").c_str()))
+			|| !file_exists(whdboot_dir + "save-data/Kickstarts/kick31034.A1000.RTB")
+			|| (!file_exists(whdboot_dir + "game-data/whdload_db.json")
+				&& !file_exists(whdboot_dir + "game-data/whdload_db.xml")))
+		{
+			const char* const seed_candidates[] = {
+#ifdef __MACH__
+				"/Resources/whdboot/",
+#endif
+				AMIBERRY_DATADIR "/whdboot/",
+				"/usr/share/amiberry-lite/whdboot/",
+				"/usr/local/share/amiberry-lite/whdboot/"
+			};
+			for (const char* const candidate : seed_candidates)
+			{
+				std::string source_dir = candidate;
+#ifdef __MACH__
+				if (source_dir[0] == '/')
+					source_dir = app_directory + source_dir;
+#endif
+				if (seed_missing_bundled_whdboot_files(source_dir))
+					break;
+			}
 		}
 	}
 	if (!my_existsdir(whdload_arch_path.c_str()))

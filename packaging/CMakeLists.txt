@@ -71,10 +71,12 @@ else()
     set(_rpm_arch "x86_64")
 endif()
 
-# Linux DEB settings - build dependency list conditionally based on enabled features
-set(_deb_deps "libc6, libstdc++6, libsdl2-2.0-0, libsdl2-image-2.0-0, libsdl2-ttf-2.0-0, flac, libpng16-16, zlib1g")
+# Linux DEB settings - build dependency list conditionally based on enabled features.
+# Debian trixie's 64-bit time_t transition renamed some libraries with a t64
+# suffix; on armhf the t64 packages do not Provide the old names, so list both.
+set(_deb_deps "libc6, libstdc++6, libsdl2-2.0-0, libsdl2-image-2.0-0, libsdl2-ttf-2.0-0, flac, libpng16-16 | libpng16-16t64, zlib1g")
 if(USE_MPG123)
-    string(APPEND _deb_deps ", libmpg123-0")
+    string(APPEND _deb_deps ", libmpg123-0 | libmpg123-0t64")
 endif()
 if(USE_ZSTD)
     string(APPEND _deb_deps ", libzstd1")
@@ -91,7 +93,7 @@ if(USE_LIBMPEG2)
     string(APPEND _deb_deps ", libmpeg2-4")
 endif()
 if(USE_UAENET_PCAP)
-    string(APPEND _deb_deps ", libpcap0.8")
+    string(APPEND _deb_deps ", libpcap0.8 | libpcap0.8t64")
 endif()
 set(CPACK_DEBIAN_FILE_NAME "DEB-DEFAULT")
 # Force the DEB payload to use a plain GNU tar format. PAX headers can carry

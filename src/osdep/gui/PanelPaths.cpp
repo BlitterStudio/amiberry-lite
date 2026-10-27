@@ -334,10 +334,11 @@ public:
 	void action(const gcn::ActionEvent& actionEvent) override
 	{
 		// Sources: WHDLoad by Bert Jahn from whdload.de, the Kickstart RTB
-		// files and JST from Aminet, host-quit, boot-data.zip and the game
-		// database (JSON, with the XML as a fallback) from the Amiberry
-		// project. WHDLoad is re-fetched on every update; the RTB files are
-		// fetched only while one is missing and JST only when it is
+		// files, JST and the optional Amiga libraries from Aminet, host-quit
+		// and the game database (JSON, with the XML as a fallback) from the
+		// Amiberry project, and boot-data.zip from the Amiberry-Lite project.
+		// WHDLoad is re-fetched on every update; the RTB files and libraries
+		// are fetched only while one is missing and JST only when it is
 		// selected and missing.
 		const auto json_destination = get_whdbootpath().append("game-data/whdload_db.json");
 		const auto xml_destination = get_whdbootpath().append("game-data/whdload_db.xml");
@@ -357,7 +358,7 @@ public:
 					result.outcome == whdboot_download_outcome::partial_failure
 						? "Some WHDBooter files were updated; others failed (see the log)."
 						: "WHDBooter files updated.",
-					"WHDLoad: Bert Jahn (whdload.de); RTB files and JST: Aminet;\nhost-quit, boot-data.zip and the database: Amiberry project.",
+					"WHDLoad: Bert Jahn (whdload.de); RTB files, JST, libraries: Aminet;\nhost-quit, database: Amiberry project; boot-data.zip: Amiberry-Lite.",
 					"JSON previous: " + old_json_timestamp + "\nJSON new: " + new_json_timestamp
 						+ "\nXML previous: " + old_xml_timestamp + "\nXML new: " + new_xml_timestamp,
 					"Ok", "");
@@ -907,13 +908,16 @@ bool HelpPanelPaths(std::vector<std::string>& helptext)
         helptext.emplace_back("their authors' distribution points: WHDLoad by Bert Jahn from whdload.de (re-fetched");
         helptext.emplace_back("on every update, and only installed after it was verified against its archive's");
         helptext.emplace_back("CRC), the RTB files once from Aminet (skick346, pinned by SHA-256, never");
-        helptext.emplace_back("overwritten) and JST from Aminet only when \"Use JST instead of WHDLoad\" is");
-        helptext.emplace_back("enabled and it is missing. host-quit, boot-data.zip and the game database come");
-        helptext.emplace_back("from the Amiberry project: the database is the JSON whdload_db.json (stored in");
-        helptext.emplace_back("whdboot/game-data, with a backup .bak of the existing copy), falling back to the");
-        helptext.emplace_back("legacy XML whdload_db.xml if the JSON download fails. The button requires an");
-        helptext.emplace_back("internet connection and write permissions in the destination directory; a failed");
-        helptext.emplace_back("download never replaces an existing file.");
+        helptext.emplace_back("overwritten), JST from Aminet only when \"Use JST instead of WHDLoad\" is enabled");
+        helptext.emplace_back("and it is missing, and the optional Amiga libraries some games need once from");
+        helptext.emplace_back("Aminet: the XPK libraries, MMULib's 68040.library, explode.library and OctaMED's");
+        helptext.emplace_back("medplayer.library (each package pinned by SHA-256; installed in whdboot/Libs, never");
+        helptext.emplace_back("overwritten). boot-data.zip comes from the Amiberry-Lite project; host-quit and the");
+        helptext.emplace_back("game database come from the Amiberry project: the database is the JSON");
+        helptext.emplace_back("whdload_db.json (stored in whdboot/game-data, with a backup .bak of the existing");
+        helptext.emplace_back("copy), falling back to the legacy XML whdload_db.xml if the JSON download fails.");
+        helptext.emplace_back("The button requires an internet connection and write permissions in the destination");
+        helptext.emplace_back("directory; a failed download never replaces an existing file.");
 		helptext.emplace_back(" ");
         helptext.emplace_back("The \"Update Controllers DB\" button will attempt to download the latest version of");
         helptext.emplace_back("the bundled gamecontrollerdb.txt file, to be stored in the Controllers files path.");

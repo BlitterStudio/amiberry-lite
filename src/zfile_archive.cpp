@@ -2271,6 +2271,7 @@ void archive_access_close (void *handle, unsigned int id)
 #endif
 #ifdef A_LHA
 	case ArchiveFormatLHA:
+		archive_close_lha (handle);
 		break;
 #endif
 	case ArchiveFormatADF:

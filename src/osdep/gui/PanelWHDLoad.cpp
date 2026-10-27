@@ -451,16 +451,23 @@ void update_slaves_list(const std::vector<whdload_slave>& slaves)
 	slaves_list.clear();
 	for (auto& slave : slaves)
 	{
-		slaves_list.add(slave.filename);
+		// Auto-detected slaves can sit in different drawers of the archive
+		if (slave.has_sub_path && !slave.sub_path.empty())
+			slaves_list.add(slave.sub_path + "/" + slave.filename);
+		else
+			slaves_list.add(slave.filename);
 	}
 }
 
 void update_selected_slave(const whdload_slave& selected_slave)
 {
 	int selected = 0;
-	for (int i = 0; i < slaves_list.getNumberOfElements(); i++)
+	for (int i = 0; i < static_cast<int>(whdload_prefs.slaves.size()); i++)
 	{
-		if (slaves_list.getElementAt(i) == selected_slave.filename)
+		const auto& slave = whdload_prefs.slaves[i];
+		if (slave.filename == selected_slave.filename
+			&& slave.has_sub_path == selected_slave.has_sub_path
+			&& slave.sub_path == selected_slave.sub_path)
 		{
 			selected = i;
 			break;

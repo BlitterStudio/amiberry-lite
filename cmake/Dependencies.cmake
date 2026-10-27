@@ -105,6 +105,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE ${SDL2_INCLUDE_DIRS} ${SDL2_I
 
 set(libmt32emu_SHARED FALSE)
 add_subdirectory(external/mt32emu)
+add_subdirectory(external/lhasa)
 add_subdirectory(external/floppybridge)
 add_subdirectory(external/capsimage)
 add_subdirectory(external/libguisan)
@@ -116,6 +117,7 @@ target_include_directories(guisan PRIVATE ${SDL2_INCLUDE_DIRS} ${SDL2_IMAGE_INCL
 target_link_libraries(${PROJECT_NAME} PRIVATE
         guisan
         mt32emu
+        lhasa
 )
 
 # nlohmann-json (header-only) for the WHDLoad JSON booter database:

@@ -4312,12 +4312,12 @@ static void whdboot_normalize_archive_name(std::string& name)
 }
 
 // Walks the LhA headers of a local archive directly - level 0 (the Aminet
-// archives) and level 1 (whdload.de's WHDLoad_usr.lha), the layout
-// src/archivers/lha/header.cpp parses - and returns the member's stored
-// CRC and original size, so an extraction can be verified before it
-// replaces anything. Anything else (other header levels, unreadable
-// headers, a missing member) reports "not found", which makes the
-// extraction refuse: fail safe.
+// archives) and level 1 (whdload.de's WHDLoad_usr.lha), in the layout the
+// LhA archiver (Lhasa, src/archivers/lha/uae_lha.cpp) reads - and returns
+// the member's stored CRC and original size, so an extraction can be
+// verified before it replaces anything. Anything else (other header
+// levels, unreadable headers, a missing member) reports "not found",
+// which makes the extraction refuse: fail safe.
 static whdboot_lha_member whdboot_lha_lookup_member(const std::string& archive_path, const std::string& member_name)
 {
 	whdboot_lha_member info;

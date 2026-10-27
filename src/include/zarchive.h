@@ -131,6 +131,7 @@ extern struct znode *zvolume_adddir_abs (struct zvolume *zv, struct zarchive_inf
 extern struct zvolume *archive_directory_plain (struct zfile *zf);
 extern struct zvolume *archive_directory_lha(struct zfile *zf);
 extern struct zfile *archive_access_lha (struct znode *zn);
+extern void archive_close_lha (void *handle);
 extern struct zvolume *archive_directory_zip(struct zfile *zf);
 extern struct zvolume *archive_directory_7z (struct zfile *z);
 //extern struct zfile *archive_access_7z (struct znode *zn);

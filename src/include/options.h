@@ -555,6 +555,8 @@ struct whdload_custom
 struct whdload_slave
 {
 	std::string filename;
+	std::string sub_path;
+	bool has_sub_path = false;
 	std::string data_path;
 	whdload_custom custom1;
 	whdload_custom custom2;

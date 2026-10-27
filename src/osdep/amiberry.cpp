@@ -4143,8 +4143,7 @@ bool download_file(const std::string& source, const std::string& destination, bo
 // redistribution. They are fetched on demand from their authors'
 // distribution points instead. host-quit and the game database come from
 // the Amiberry project; boot-data.zip comes from Amiberry-Lite's own
-// repository, because Lite's differs from Amiberry's (it also carries the
-// original booter's files).
+// repository.
 static const char* const whdload_usr_url = "https://whdload.de/whdload/WHDLoad_usr.lha";
 static const char* const skick346_url = "https://aminet.net/util/boot/skick346.lha";
 // skick346.lha is frozen on Aminet: its SHA-256 is pinned so a corrupted

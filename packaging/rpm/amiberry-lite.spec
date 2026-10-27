@@ -2,7 +2,7 @@
 %global debug_package %{nil}
 
 Name:           amiberry-lite
-Version:        5.9.5
+Version:        5.9.6
 Release:        1%{?dist}
 Summary:        Optimized Amiga emulator for ARM, ARM64, AMD64 and RISC-V platforms
 
@@ -86,6 +86,9 @@ fi
 %{_mandir}/man1/amiberry-lite.1.gz
 
 %changelog
+* Tue Oct 27 2026 Dimitris Panokostas <midwan@gmail.com> - 5.9.6-1
+- Update to 5.9.6
+
 * Tue Oct 27 2026 Dimitris Panokostas <midwan@gmail.com> - 5.9.5-1
 - Update to 5.9.5
 

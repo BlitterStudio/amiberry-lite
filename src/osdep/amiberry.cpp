@@ -4141,8 +4141,10 @@ bool download_file(const std::string& source, const std::string& destination, bo
 // skick346), JST (Aminet) and the optional Amiga libraries (see below) are
 // not bundled with Amiberry-Lite: their licences do not allow
 // redistribution. They are fetched on demand from their authors'
-// distribution points instead. host-quit, boot-data.zip and the game
-// database come from the Amiberry project.
+// distribution points instead. host-quit and the game database come from
+// the Amiberry project; boot-data.zip comes from Amiberry-Lite's own
+// repository, because Lite's differs from Amiberry's (it also carries the
+// original booter's files).
 static const char* const whdload_usr_url = "https://whdload.de/whdload/WHDLoad_usr.lha";
 static const char* const skick346_url = "https://aminet.net/util/boot/skick346.lha";
 // skick346.lha is frozen on Aminet: its SHA-256 is pinned so a corrupted
@@ -4151,7 +4153,7 @@ static const char* const skick346_sha256 =
 	"02b4d01852d12ab391c6469064f917221a0f7319fd0b3ba6c359403ec1d59f96";
 static const char* const jst_url = "https://aminet.net/game/patch/jst.lha";
 static const char* const host_quit_url = "https://github.com/BlitterStudio/amiberry/blob/master/whdboot/host-quit?raw=true";
-static const char* const boot_data_url = "https://github.com/BlitterStudio/amiberry/blob/master/whdboot/boot-data.zip?raw=true";
+static const char* const boot_data_url = "https://github.com/BlitterStudio/amiberry-lite/blob/master/whdboot/boot-data.zip?raw=true";
 static const char* const whdload_db_json_url = "https://raw.githubusercontent.com/BlitterStudio/amiberry-game-db/main/whdload_db.json";
 static const char* const whdload_db_xml_url = "https://github.com/HoraceAndTheSpider/Amiberry-XML-Builder/blob/master/whdload_db.xml?raw=true";
 
@@ -4733,8 +4735,8 @@ whdboot_download_result download_whdboot_assets()
 		std::remove(archive.c_str());
 	}
 
-	// host-quit (Host-Tools, GPL-3) and boot-data.zip, from the Amiberry
-	// project's repository.
+	// host-quit (Host-Tools, GPL-3) from the Amiberry project's repository,
+	// and Lite's own boot-data.zip from the Amiberry-Lite repository.
 	{
 		const std::string destination = get_whdbootpath() + "host-quit";
 		write_log("Downloading %s ...\n", destination.c_str());

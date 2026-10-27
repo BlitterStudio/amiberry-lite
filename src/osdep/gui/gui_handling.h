@@ -441,10 +441,11 @@ struct whdboot_download_result
 // Downloads the WHDBoot runtime assets on demand: WHDLoad (Bert Jahn)
 // from whdload.de, the Kickstart RTB files, JST and the optional Amiga
 // libraries (XPK, MMULib's 68040.library, explode.library,
-// medplayer.library) from Aminet, and host-quit, boot-data.zip and the
-// game database from the Amiberry project. Re-fetches WHDLoad, host-quit,
-// boot-data.zip and the database; fetches the RTB files and libraries
-// only while one is missing and JST only when it is selected and missing.
+// medplayer.library) from Aminet, host-quit and the game database from
+// the Amiberry project, and boot-data.zip from the Amiberry-Lite project.
+// Re-fetches WHDLoad, host-quit, boot-data.zip and the database; fetches
+// the RTB files and libraries only while one is missing and JST only when
+// it is selected and missing.
 // Never overwrites an existing RTB file, library or JST.
 extern whdboot_download_result download_whdboot_assets();
 extern bool whdboot_can_download();

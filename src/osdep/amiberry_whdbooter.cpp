@@ -1266,6 +1266,28 @@ static void ensure_executable(const std::filesystem::path& path)
 #endif
 }
 
+// True when the WHDBoot folder's Libs drawer holds one of the optional
+// Amiga libraries the download installs (the XPK stack with its
+// Compressors drawer, MMULib's 68040.library, explode.library,
+// medplayer.library). They cannot ship inside boot-data.zip, so the
+// download puts them in a real directory the booter mounts as an extra
+// volume and appends to LIBS:.
+static bool whdboot_downloaded_libraries_present()
+{
+	std::error_code ec;
+	const std::filesystem::path libraries_path = whdbooter_path / "Libs";
+	if (!std::filesystem::is_directory(libraries_path, ec))
+		return false;
+	for (std::filesystem::directory_iterator it(libraries_path, ec), end; !ec && it != end; it.increment(ec))
+	{
+		if (it->is_regular_file(ec))
+			return true;
+	}
+	if (ec)
+		write_log("WHDBooter - could not scan %s: %s\n", libraries_path.string().c_str(), ec.message().c_str());
+	return false;
+}
+
 void create_startup_sequence()
 {
 	std::ostringstream whd_bootscript;
@@ -1275,6 +1297,12 @@ void create_startup_sequence()
 	{
 		whd_bootscript << "DH3:C/Assign LIBS: DH3:LIBS/ ADD\n";
 	}
+	// The libraries downloaded on demand are mounted as DH4:; appending
+	// the volume to LIBS: also puts its Compressors drawer within reach of
+	// xpkmaster.library as LIBS:Compressors.
+	if (whdboot_downloaded_libraries_present())
+		whd_bootscript << "DH3:C/Assign LIBS: DH4: ADD\n";
+
 	if (amiberry_options.use_jst_instead_of_whd)
 		whd_bootscript << "IF NOT EXISTS JST\n";
 	else
@@ -1395,6 +1423,18 @@ void set_booter_drives(uae_prefs* prefs, const char* filepath)
 
 		tmp = "uaehf0=dir,rw,DH3:DH3::" + boot_path.string() + ",-10";
 		cfgfile_parse_line(prefs, parse_text(tmp.c_str()), 0);
+
+		// The optional Amiga libraries (downloaded on demand) get their
+		// own volume, so nothing ever writes into boot-data.zip.
+		if (whdboot_downloaded_libraries_present())
+		{
+			boot_path = whdbooter_path / "Libs";
+			tmp = "filesystem2=rw,DH4:Libs:" + boot_path.string() + ",-10";
+			cfgfile_parse_line(prefs, parse_text(tmp.c_str()), 0);
+
+			tmp = "uaehf4=dir,rw,DH4:Libs::" + boot_path.string() + ",-10";
+			cfgfile_parse_line(prefs, parse_text(tmp.c_str()), 0);
+		}
 	}
 	else // revert to original booter is no slave was set
 	{

@@ -497,15 +497,18 @@ STATIC_INLINE void compemu_raw_maybe_do_nothing(IM32 cycles)
   uae_s8 *branchadd = (uae_s8 *)get_target();
   CBZ_wi(REG_WORK1, 0);  // <end>
 
-  idx = (uintptr)&countdown - (uintptr) &regs;
-  LDR_wXi(REG_WORK2, R_REGSTRUCT, idx);
+  // countdown is a global, not a regs field; its distance from regs depends on
+  // the link layout and can exceed the LDR/STR immediate range, so address it
+  // absolutely.
+  LOAD_U64(REG_WORK3, (uintptr)&countdown);
+  LDR_wXi(REG_WORK2, REG_WORK3, 0);
   if(cycles >= 0 && cycles <= 0xfff) {
 	SUB_wwi(REG_WORK2, REG_WORK2, cycles);
   } else {
 	LOAD_U32(REG_WORK1, cycles);
 	  SUB_www(REG_WORK2, REG_WORK2, REG_WORK1);
   }
-  STR_wXi(REG_WORK2, R_REGSTRUCT, idx);
+  STR_wXi(REG_WORK2, REG_WORK3, 0);
 
   uae_u32* branchadd2 = (uae_u32*)get_target();
   B_i(0);
@@ -529,19 +532,19 @@ LENDFUNC(NONE,NONE,1,compemu_raw_init_r_regstruct,(IMPTR s))
 LOWFUNC(NONE,NONE,2,compemu_raw_endblock_pc_inreg,(RR4 rr_pc, IM32 cycles))
 {
   // countdown -= scaled_cycles(totcycles);
-  uintptr offs = (uintptr)&countdown - (uintptr)&regs;
-	LDR_wXi(REG_WORK1, R_REGSTRUCT, offs);
+  LOAD_U64(REG_WORK3, (uintptr)&countdown);
+	LDR_wXi(REG_WORK1, REG_WORK3, 0);
   if(cycles >= 0 && cycles <= 0xfff) {
 	  SUB_wwi(REG_WORK1, REG_WORK1, cycles);
 	} else {
 	  LOAD_U32(REG_WORK2, cycles);
 	SUB_www(REG_WORK1, REG_WORK1, REG_WORK2);
   }
-	STR_wXi(REG_WORK1, R_REGSTRUCT, offs);
+	STR_wXi(REG_WORK1, REG_WORK3, 0);
 
 	TBNZ_xii(REG_WORK1, 31, 5); // test sign and branch if set (negative)
   UBFIZ_xxii(rr_pc, rr_pc, 0, 16);  // apply TAGMASK
-	offs = (uintptr)(&regs.cache_tags) - (uintptr)&regs;
+	uintptr offs = (uintptr)(&regs.cache_tags) - (uintptr)&regs;
 	LDR_xXi(REG_WORK1, R_REGSTRUCT, offs);
 	LDR_xXxLSLi(REG_WORK1, REG_WORK1, rr_pc, 3); // cacheline holds pointer -> multiply with 8
   BR_x(REG_WORK1);
@@ -557,22 +560,22 @@ STATIC_INLINE uae_u32* compemu_raw_endblock_pc_isconst(IM32 cycles, IMPTR v)
   /* v is always >= NATMEM_OFFSET and < NATMEM_OFFSET + max. Amiga mem */
 	uae_u32* tba;
   // countdown -= scaled_cycles(totcycles);
-  uintptr offs = (uintptr)&countdown - (uintptr)&regs;
-	LDR_wXi(REG_WORK1, R_REGSTRUCT, offs);
+  LOAD_U64(REG_WORK3, (uintptr)&countdown);
+	LDR_wXi(REG_WORK1, REG_WORK3, 0);
   if(cycles >= 0 && cycles <= 0xfff) {
 	  SUB_wwi(REG_WORK1, REG_WORK1, cycles);
 	} else {
 	  LOAD_U32(REG_WORK2, cycles);
 	SUB_www(REG_WORK1, REG_WORK1, REG_WORK2);
   }
-	STR_wXi(REG_WORK1, R_REGSTRUCT, offs);
+	STR_wXi(REG_WORK1, REG_WORK3, 0);
 
   TBNZ_xii(REG_WORK1, 31, 2); // test sign and branch if set (negative)
 	tba = (uae_u32*)get_target();
   B_i(0); // <target set by caller>
   
   LDR_xPCi(REG_WORK1, 12); // <v>
-  offs = (uintptr)&regs.pc_p - (uintptr)&regs;
+  uintptr offs = (uintptr)&regs.pc_p - (uintptr)&regs;
   STR_xXi(REG_WORK1, R_REGSTRUCT, offs);
   uae_u32* branchadd = (uae_u32*)get_target();
   B_i(0);

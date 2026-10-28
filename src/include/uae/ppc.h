@@ -11,7 +11,7 @@
  * C++ overloads such as ppc_cpu_init(uint32) remain compatible.
  *
  * Copyright (C) 2026 Dimitris Panokostas
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
 #ifndef UAE_PPC_H
